@@ -65,7 +65,12 @@ class DashboardServices:
         self.hub.loop = asyncio.get_running_loop()
         self._start_hardware()
         self.tasks = [
-            asyncio.create_task(self._periodic("weather", self.sync_weather)),
+            asyncio.create_task(
+                self._periodic("weather_current", self.sync_weather_current)
+            ),
+            asyncio.create_task(
+                self._periodic("weather_forecast", self.sync_weather_forecast)
+            ),
             asyncio.create_task(self._periodic("alerts", self.sync_alerts)),
             asyncio.create_task(self._periodic("calendar", self.sync_calendars)),
             asyncio.create_task(self._timer_loop()),
@@ -108,11 +113,19 @@ class DashboardServices:
 
     async def _periodic(self, kind: str, operation) -> None:
         intervals = {
-            "weather": "weather_current_interval_seconds",
+            "weather_current": "weather_current_interval_seconds",
+            "weather_forecast": "weather_forecast_interval_seconds",
             "alerts": "weather_alert_interval_seconds",
             "calendar": "calendar_interval_seconds",
         }
-        await asyncio.sleep({"weather": 2, "alerts": 4, "calendar": 8}[kind])
+        await asyncio.sleep(
+            {
+                "weather_current": 2,
+                "weather_forecast": 6,
+                "alerts": 4,
+                "calendar": 8,
+            }[kind]
+        )
         while True:
             try:
                 await operation()
@@ -138,8 +151,21 @@ class DashboardServices:
                    last_error=excluded.last_error""",
             (provider, "{}", None if error else now, now, error),
         )
+        self.database.execute(
+            """INSERT INTO sync_log(provider,status,message,attempted_at)
+               VALUES(?,?,?,?)""",
+            (provider, "error" if error else "success", error or "", now),
+        )
+        self.database.execute(
+            """DELETE FROM sync_log WHERE id NOT IN (
+                   SELECT id FROM sync_log ORDER BY id DESC LIMIT 200
+               )"""
+        )
 
-    async def sync_weather(self) -> dict[str, Any] | None:
+    def record_sync_error(self, provider: str, error: Exception) -> None:
+        self._sync_state(provider, error=str(error))
+
+    async def sync_weather_forecast(self) -> dict[str, Any] | None:
         async with self._sync_locks["weather"]:
             latitude = self.database.setting("latitude")
             longitude = self.database.setting("longitude")
@@ -166,6 +192,45 @@ class DashboardServices:
             )
             self._sync_state("weather")
             await self.hub.broadcast("weather.updated", {"fetched_at": utcnow()})
+            return data
+
+    async def sync_weather_current(self) -> dict[str, Any] | None:
+        cached = self.database.one(
+            """SELECT data_json FROM weather_cache
+               WHERE cache_key='forecast'"""
+        )
+        if not cached:
+            return await self.sync_weather_forecast()
+        async with self._sync_locks["weather"]:
+            latitude = self.database.setting("latitude")
+            longitude = self.database.setting("longitude")
+            if latitude is None or longitude is None:
+                return None
+            update = await self.weather.current(
+                float(latitude),
+                float(longitude),
+                self.database.setting("temperature_unit", "fahrenheit"),
+                self.database.setting("wind_unit", "mph"),
+            )
+            data = json.loads(cached["data_json"])
+            data["current"] = update["current"]
+            data["units"].update(update["units"])
+            data["fetched_at"] = update["fetched_at"]
+            now = datetime.now(UTC)
+            self.database.execute(
+                """UPDATE weather_cache SET data_json=?,fetched_at=?,expires_at=?
+                   WHERE cache_key='forecast'""",
+                (
+                    json.dumps(data),
+                    now.isoformat(),
+                    (now + timedelta(minutes=5)).isoformat(),
+                ),
+            )
+            self._sync_state("weather_current")
+            await self.hub.broadcast(
+                "weather.updated",
+                {"scope": "current", "fetched_at": utcnow()},
+            )
             return data
 
     async def sync_alerts(self) -> list[dict[str, Any]]:
@@ -278,8 +343,10 @@ class DashboardServices:
                 if not password:
                     continue
                 provider = ICloudCalendarProvider(account["username"], password)
+                await self._rediscover_account(account, provider)
                 calendars = self.database.all(
-                    "SELECT * FROM calendars WHERE account_id=? AND enabled=1",
+                    """SELECT * FROM calendars
+                       WHERE account_id=? AND enabled=1 AND available=1""",
                     (account["id"],),
                 )
                 starts = datetime.now(UTC) - timedelta(days=62)
@@ -337,6 +404,59 @@ class DashboardServices:
                     raise
             self._sync_state("calendar")
             await self.hub.broadcast("calendar.updated", {"synced_at": utcnow()})
+
+    async def rediscover_calendars(self) -> list[dict[str, Any]]:
+        accounts = self.database.all(
+            "SELECT * FROM calendar_accounts WHERE enabled=1"
+        )
+        for account in accounts:
+            password = self.secrets.get(f"calendar_password_{account['id']}")
+            if not password or account["provider"] != "icloud":
+                continue
+            await self._rediscover_account(
+                account,
+                ICloudCalendarProvider(account["username"], password),
+            )
+        return self.database.all(
+            """SELECT c.*,a.display_name AS account_name,a.provider
+               FROM calendars c JOIN calendar_accounts a ON a.id=c.account_id
+               ORDER BY c.available DESC,a.id,c.name"""
+        )
+
+    async def _rediscover_account(
+        self,
+        account: dict[str, Any],
+        provider: ICloudCalendarProvider,
+    ) -> None:
+        remote_calendars = await provider.discover()
+        existing_count = self.database.one(
+            "SELECT COUNT(*) AS count FROM calendars WHERE account_id=?",
+            (account["id"],),
+        )["count"]
+        colors = ["#6ea8fe", "#ff8a65", "#66d19e", "#c792ea", "#ffd166", "#58c4dc"]
+        with self.database.transaction() as connection:
+            connection.execute(
+                "UPDATE calendars SET available=0 WHERE account_id=?",
+                (account["id"],),
+            )
+            for index, item in enumerate(remote_calendars):
+                connection.execute(
+                    """INSERT INTO calendars(
+                           account_id,remote_id,name,color,enabled,available,
+                           shared,read_only
+                       ) VALUES(?,?,?,?,1,1,?,?)
+                       ON CONFLICT(account_id,remote_id) DO UPDATE SET
+                           name=excluded.name,available=1,
+                           shared=excluded.shared,read_only=excluded.read_only""",
+                    (
+                        account["id"],
+                        item.remote_id,
+                        item.name,
+                        colors[(existing_count + index) % len(colors)],
+                        int(item.shared),
+                        int(item.read_only),
+                    ),
+                )
 
     async def lookup_barcode(self, scanned: str) -> dict[str, Any]:
         barcode = normalize_barcode(scanned)

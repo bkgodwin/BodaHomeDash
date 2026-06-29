@@ -5,9 +5,11 @@ Model B (2 GB) and a 1920×1080 touchscreen.
 
 The current implementation includes:
 
-- a full-month, read-only iCloud calendar with multiple calendar selection;
+- a full-month, read-only iCloud calendar with multiple accounts, periodic
+  rediscovery, and Apple-shared calendar support;
 - Louisiana/US holidays and pantry expiration markers;
-- current, hourly, and daily weather from Open-Meteo;
+- current, hourly, and daily weather from Open-Meteo, with day/night and
+  condition-aware forecast styling;
 - NWS alerts, with emergency-only display wake and one gentle audio chime;
 - barcode lookup through a local cache and Open Food Facts;
 - pantry inventory with separate expiration batches;
@@ -17,7 +19,12 @@ The current implementation includes:
 - PIN-protected phone layouts on the local network;
 - optional encrypted USB backups restorable during a fresh setup;
 - an optional garbage-pickup-day reminder beside the clock; and
-- a touch-first setup wizard and on-screen keyboards.
+- a touch-first setup wizard, optional full on-screen keyboard, physical
+  keyboard support, and touch-native confirmation dialogs.
+
+The Windows development build supports keyboard-wedge barcode scanners and
+audio through the Windows sound system. Raspberry Pi deployments use evdev for
+the selected scanner and ALSA for HDMI audio.
 
 ## Hardware target
 
@@ -95,10 +102,9 @@ Tailscale. Tailscale HTTPS is recommended for access away from home.
 
 ## Project status
 
-This is the first working implementation. Automated backend/frontend tests and
-a production frontend build are included. GPIO, HDMI sleep, scanner identity,
-touch calibration, and HDMI audio still require final validation on the exact
-Raspberry Pi and attached hardware.
+Automated backend/frontend tests and a production frontend build are included.
+GPIO, HDMI sleep, touch calibration, and HDMI audio still require final
+validation on the exact Raspberry Pi and attached hardware.
 
 The full agreed specification is preserved in
 [Project Plan](docs/PROJECT_PLAN.md).

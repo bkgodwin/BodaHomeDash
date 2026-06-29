@@ -53,6 +53,9 @@ CREATE TABLE IF NOT EXISTS calendars (
     name TEXT NOT NULL,
     color TEXT NOT NULL DEFAULT '#4f8cff',
     enabled INTEGER NOT NULL DEFAULT 1,
+    available INTEGER NOT NULL DEFAULT 1,
+    shared INTEGER NOT NULL DEFAULT 0,
+    read_only INTEGER NOT NULL DEFAULT 1,
     sync_token TEXT,
     UNIQUE(account_id, remote_id)
 );
@@ -184,6 +187,15 @@ CREATE TABLE IF NOT EXISTS sync_state (
     last_error TEXT
 );
 
+CREATE TABLE IF NOT EXISTS sync_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider TEXT NOT NULL,
+    status TEXT NOT NULL,
+    message TEXT NOT NULL DEFAULT '',
+    attempted_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sync_log_attempted ON sync_log(attempted_at DESC);
+
 INSERT OR IGNORE INTO schema_migrations(version, applied_at)
 VALUES (1, datetime('now'));
 """
@@ -217,6 +229,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "display_output": "HDMI-A-1",
     "weather_effects": "full",
     "reduced_motion": False,
+    "onscreen_keyboard_enabled": True,
     "alert_wake_severities": ["Extreme"],
     "alert_sound_severities": ["Extreme"],
     "alert_volume": 55,
@@ -265,6 +278,19 @@ class Database:
         connection = self._connect()
         try:
             connection.executescript(SCHEMA)
+            calendar_columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(calendars)").fetchall()
+            }
+            for name, definition in {
+                "available": "INTEGER NOT NULL DEFAULT 1",
+                "shared": "INTEGER NOT NULL DEFAULT 0",
+                "read_only": "INTEGER NOT NULL DEFAULT 1",
+            }.items():
+                if name not in calendar_columns:
+                    connection.execute(
+                        f"ALTER TABLE calendars ADD COLUMN {name} {definition}"
+                    )
             now = utcnow()
             connection.executemany(
                 "INSERT OR IGNORE INTO settings(key, value_json, updated_at) VALUES(?,?,?)",

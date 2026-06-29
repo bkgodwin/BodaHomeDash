@@ -1,4 +1,5 @@
-import { useState } from "preact/hooks";
+import { useRef, useState } from "preact/hooks";
+import { onScreenKeyboardEnabled } from "../inputPreferences";
 import { Modal } from "./Modal";
 import { TouchKeyboard } from "./TouchKeyboard";
 
@@ -8,6 +9,8 @@ interface Props {
   onChange: (value: string) => void;
   secret?: boolean;
   placeholder?: string;
+  multiline?: boolean;
+  autocomplete?: string;
 }
 
 export function TouchInput({
@@ -15,41 +18,81 @@ export function TouchInput({
   value,
   onChange,
   secret,
-  placeholder
+  placeholder,
+  multiline = false,
+  autocomplete = "off"
 }: Props) {
   const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState(value);
+  const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
+  const modalInputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
+  const openKeyboard = () => {
+    if (onScreenKeyboardEnabled.value) setOpen(true);
+  };
+  const common = {
+    value,
+    placeholder: placeholder || `Enter ${label.toLowerCase()}`,
+    onInput: (
+      event: Event & { currentTarget: HTMLInputElement | HTMLTextAreaElement }
+    ) => onChange(event.currentTarget.value),
+    onFocus: openKeyboard
+  };
   return (
     <>
-      <button
-        type="button"
-        class="touch-field"
-        onClick={() => {
-          setDraft(value);
-          setOpen(true);
-        }}
-      >
+      <label class="touch-field native-touch-field">
         <small>{label}</small>
-        <span>
-          {value
-            ? secret
-              ? "••••••••••"
-              : value
-            : placeholder || `Enter ${label.toLowerCase()}`}
-        </span>
-      </button>
+        {multiline ? (
+          <textarea
+            {...common}
+            ref={inputRef as { current: HTMLTextAreaElement | null }}
+            rows={3}
+          />
+        ) : (
+          <input
+            {...common}
+            ref={inputRef as { current: HTMLInputElement | null }}
+            type={secret ? "password" : "text"}
+            autocomplete={autocomplete}
+          />
+        )}
+      </label>
       {open && (
         <Modal title={label} onClose={() => setOpen(false)} wide>
-          <div class="entry-preview">
-            {secret ? "•".repeat(draft.length) : draft || placeholder}
-          </div>
+          {multiline ? (
+            <textarea
+              ref={modalInputRef as { current: HTMLTextAreaElement | null }}
+              class="entry-native-input multiline"
+              value={value}
+              placeholder={placeholder}
+              autofocus
+              rows={3}
+              onInput={(event) =>
+                onChange(
+                  (event.currentTarget as HTMLTextAreaElement).value
+                )
+              }
+            />
+          ) : (
+            <input
+              ref={modalInputRef as { current: HTMLInputElement | null }}
+              class="entry-native-input"
+              type={secret ? "password" : "text"}
+              value={value}
+              placeholder={placeholder}
+              autocomplete={autocomplete}
+              autofocus
+              onInput={(event) =>
+                onChange((event.currentTarget as HTMLInputElement).value)
+              }
+              onKeyDown={(event) => {
+                if (event.key === "Enter") setOpen(false);
+              }}
+            />
+          )}
           <TouchKeyboard
-            value={draft}
-            onChange={setDraft}
-            onConfirm={() => {
-              onChange(draft);
-              setOpen(false);
-            }}
+            value={value}
+            onChange={onChange}
+            targetRef={modalInputRef}
+            onConfirm={() => setOpen(false)}
           />
         </Modal>
       )}

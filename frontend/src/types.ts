@@ -8,6 +8,7 @@ export interface Status {
   garbage_pickup_enabled: boolean;
   garbage_pickup_weekday: number;
   reduced_motion: boolean;
+  onscreen_keyboard_enabled: boolean;
   time: string;
 }
 

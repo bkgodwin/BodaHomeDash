@@ -6,6 +6,7 @@ def test_status_and_settings(client):
     assert response.status_code == 200
     assert response.json()["local"] is True
     assert response.json()["garbage_pickup_enabled"] is False
+    assert response.json()["onscreen_keyboard_enabled"] is True
     response = client.patch(
         "/api/v1/settings",
         json={"values": {"household_name": "Bayou Home"}},
@@ -73,3 +74,9 @@ def test_calendar_holidays_and_expirations(client):
     response = client.get(f"/api/v1/calendar?start={start}&end={end}")
     assert response.status_code == 200
     assert {"events", "holidays", "expirations"} <= response.json().keys()
+
+
+def test_sync_diagnostics_endpoint(client):
+    response = client.get("/api/v1/sync/status")
+    assert response.status_code == 200
+    assert {"providers", "log"} <= response.json().keys()

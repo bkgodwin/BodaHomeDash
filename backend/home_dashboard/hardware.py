@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import os
 import platform
+import json
 import struct
 import subprocess
 import tempfile
@@ -43,11 +44,21 @@ class DisplayController:
 
 class AudioController:
     def play(self, kind: str = "timer", volume: int = 60) -> bool:
-        if platform.system() != "Linux":
-            return True
         frequency = 660 if kind == "timer" else 523
         notes = [(frequency, 0.20), (frequency * 1.25, 0.24)]
         path = self._tone(notes, volume)
+        if platform.system() == "Windows":
+            try:
+                threading.Thread(
+                    target=self._play_windows, args=(path,), daemon=True
+                ).start()
+                return True
+            except Exception:
+                path.unlink(missing_ok=True)
+                return False
+        if platform.system() != "Linux":
+            path.unlink(missing_ok=True)
+            return False
         try:
             process = subprocess.Popen(
                 ["aplay", "-q", str(path)],
@@ -61,6 +72,17 @@ class AudioController:
         except Exception:
             path.unlink(missing_ok=True)
             return False
+
+    @staticmethod
+    def _play_windows(path: Path) -> None:
+        try:
+            import winsound
+
+            winsound.PlaySound(
+                str(path), winsound.SND_FILENAME | winsound.SND_NODEFAULT
+            )
+        finally:
+            path.unlink(missing_ok=True)
 
     @staticmethod
     def _cleanup_tone(process: subprocess.Popen, path: Path) -> None:
@@ -148,15 +170,82 @@ class BarcodeMonitor:
 
     @staticmethod
     def devices() -> list[dict[str, str]]:
+        if platform.system() == "Windows":
+            return BarcodeMonitor._windows_devices()
         if platform.system() != "Linux":
             return []
         try:
             from evdev import InputDevice, list_devices
 
-            return [
-                {"path": path, "name": InputDevice(path).name}
-                for path in list_devices()
+            devices = []
+            for path in list_devices():
+                name = InputDevice(path).name
+                devices.append(
+                    {
+                        "path": path,
+                        "name": name,
+                        "platform": "linux",
+                        "selectable": "true",
+                        "candidate": (
+                            "true"
+                            if any(
+                                word in name.casefold()
+                                for word in ("barcode", "bar code", "scanner")
+                            )
+                            else "false"
+                        ),
+                    }
+                )
+            return devices
+        except Exception:
+            return []
+
+    @staticmethod
+    def _windows_devices() -> list[dict[str, str]]:
+        command = (
+            "Get-CimInstance Win32_PnPEntity | "
+            "Where-Object { $_.Present -eq $true -and "
+            "$_.PNPClass -in @('Keyboard','HIDClass') } | "
+            "Select-Object Name,DeviceID,PNPClass | ConvertTo-Json -Compress"
+        )
+        try:
+            result = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=True,
+            )
+            if not result.stdout.strip():
+                return []
+            payload = json.loads(result.stdout)
+            rows = payload if isinstance(payload, list) else [payload]
+            devices = [
+                {
+                    "path": str(item.get("DeviceID") or ""),
+                    "name": str(item.get("Name") or "USB input device"),
+                    "platform": "windows",
+                    "selectable": "false",
+                    "candidate": (
+                        "true"
+                        if any(
+                            word in str(item.get("Name") or "").casefold()
+                            for word in ("barcode", "bar code", "scanner")
+                        )
+                        else "false"
+                    ),
+                }
+                for item in rows
+                if item.get("DeviceID")
             ]
+            return sorted(
+                devices,
+                key=lambda item: (
+                    item["candidate"] != "true",
+                    item["name"].casefold(),
+                    item["path"].casefold(),
+                ),
+            )
         except Exception:
             return []
 

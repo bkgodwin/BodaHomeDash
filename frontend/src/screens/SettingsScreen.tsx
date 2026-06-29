@@ -1,6 +1,10 @@
 import { useEffect, useState } from "preact/hooks";
 import { api, jsonBody } from "../api";
 import { TouchInput } from "../components/TouchInput";
+import {
+  BarcodeScanEvent,
+  scannerTestMode
+} from "../scannerCapture";
 
 interface Props {
   onToast: (message: string) => void;
@@ -33,19 +37,37 @@ export function SettingsScreen({
   const [wifiPassword, setWifiPassword] = useState("");
   const [selectedSsid, setSelectedSsid] = useState("");
   const [busy, setBusy] = useState(false);
+  const [scannerTest, setScannerTest] = useState("");
+  const [syncDiagnostics, setSyncDiagnostics] = useState<any>({
+    providers: [],
+    log: []
+  });
 
   const load = async () => {
-    const [values, calendarValues, deviceValues] = await Promise.all([
+    const [values, calendarValues, deviceValues, syncValues] = await Promise.all([
       api<Settings>("/settings"),
       api<any[]>("/calendar/calendars"),
-      api<any>("/hardware/devices")
+      api<any>("/hardware/devices"),
+      api<any>("/sync/status")
     ]);
     setSettings(values);
     setCalendars(calendarValues);
     setDevices(deviceValues);
+    setSyncDiagnostics(syncValues);
   };
   useEffect(() => {
     load().catch((error) => onToast(error.message));
+    const scanned = (event: Event) => {
+      const detail = (event as CustomEvent<BarcodeScanEvent>).detail;
+      if (!scannerTestMode.value) return;
+      setScannerTest(`Scanner working — received ${detail.barcode}`);
+      scannerTestMode.value = false;
+    };
+    window.addEventListener("dashboard:barcode", scanned);
+    return () => {
+      window.removeEventListener("dashboard:barcode", scanned);
+      scannerTestMode.value = false;
+    };
   }, []);
 
   const save = async (values: Settings, message = "Settings saved") => {
@@ -249,6 +271,16 @@ export function SettingsScreen({
                 }
               />
               <SettingToggle
+                label="Enable on-screen keyboard"
+                checked={settings.onscreen_keyboard_enabled}
+                onChange={(value) =>
+                  setSettings({
+                    ...settings,
+                    onscreen_keyboard_enabled: value
+                  })
+                }
+              />
+              <SettingToggle
                 label="Show garbage pickup reminder"
                 checked={settings.garbage_pickup_enabled}
                 onChange={(value) =>
@@ -293,6 +325,8 @@ export function SettingsScreen({
                     household_name: settings.household_name,
                     clock_24_hour: settings.clock_24_hour,
                     reduced_motion: settings.reduced_motion,
+                    onscreen_keyboard_enabled:
+                      settings.onscreen_keyboard_enabled,
                     garbage_pickup_enabled:
                       settings.garbage_pickup_enabled,
                     garbage_pickup_weekday:
@@ -419,10 +453,34 @@ export function SettingsScreen({
             </SettingsCard>
             {calendars.length > 0 && (
               <SettingsCard title="Visible calendars">
+                <button
+                  class="button secondary"
+                  onClick={async () => {
+                    try {
+                      const values = await api<any[]>(
+                        "/calendar/rediscover",
+                        { method: "POST" }
+                      );
+                      setCalendars(values);
+                      onToast(
+                        `Calendar list refreshed — ${values.length} found`
+                      );
+                    } catch (error: any) {
+                      onToast(error.message);
+                    }
+                  }}
+                >
+                  Refresh calendar list
+                </button>
                 {calendars.map((calendar) => (
-                  <label class="calendar-setting-row">
+                  <label
+                    class={`calendar-setting-row ${
+                      calendar.available ? "" : "unavailable"
+                    }`}
+                  >
                     <input
                       type="checkbox"
+                      disabled={!calendar.available}
                       checked={Boolean(calendar.enabled)}
                       onChange={(event) =>
                         setCalendars((items) =>
@@ -447,7 +505,11 @@ export function SettingsScreen({
                         )
                       }
                     />
-                    <span>{calendar.name}</span>
+                    <span>
+                      {calendar.name}
+                      {calendar.shared ? " · Shared with me" : ""}
+                      {!calendar.available ? " · No longer available" : ""}
+                    </span>
                   </label>
                 ))}
                 <button
@@ -566,7 +628,49 @@ export function SettingsScreen({
               </div>
             </SettingsCard>
             <SettingsCard title="Barcode scanner and audio">
-              <label class="setting-select">
+              <div class="button-row">
+                <button
+                  class="button secondary"
+                  onClick={async () => {
+                    const refreshed = await api<any>("/hardware/devices");
+                    setDevices(refreshed);
+                    const candidates = (refreshed.input_devices || []).filter(
+                      (device: any) => device.candidate === "true"
+                    );
+                    onToast(
+                      candidates.length
+                        ? `Detected ${candidates.length} likely barcode scanner${candidates.length === 1 ? "" : "s"}`
+                        : `Found ${refreshed.input_devices?.length || 0} HID input device(s); use Test barcode scanner to confirm`
+                    );
+                  }}
+                >
+                  Scan for hardware
+                </button>
+                <button
+                  class="button secondary"
+                  onClick={() => {
+                    setScannerTest("Waiting for a barcode…");
+                    scannerTestMode.value = true;
+                  }}
+                >
+                  Test barcode scanner
+                </button>
+              </div>
+              {scannerTest && <p class="hardware-test-result">{scannerTest}</p>}
+              {(devices.input_devices || [])
+                .filter((device: any) => device.candidate === "true")
+                .map((device: any) => (
+                  <p class="hardware-test-result">
+                    Scanner detected: {device.name}
+                  </p>
+                ))}
+              {devices.platform === "Windows" && (
+                <p class="hint">
+                  Windows scanners use keyboard-wedge capture. The scan test is
+                  the definitive check even if the device has a generic HID name.
+                </p>
+              )}
+              {devices.platform !== "Windows" && <label class="setting-select">
                 <span>Scanner input device</span>
                 <select
                   value={settings.scanner_device}
@@ -579,12 +683,14 @@ export function SettingsScreen({
                 >
                   <option value="">Select during hardware setup</option>
                   {devices.input_devices?.map((device: any) => (
-                    <option value={device.path}>
+                    <option
+                      value={device.selectable === "false" ? "" : device.path}
+                    >
                       {device.name} — {device.path}
                     </option>
                   ))}
                 </select>
-              </label>
+              </label>}
               <div class="button-row">
                 <button
                   class="button secondary"
@@ -807,9 +913,15 @@ export function SettingsScreen({
                 class="button primary"
                 onClick={async () => {
                   const result = await api<any>("/refresh", { method: "POST" });
+                  setSyncDiagnostics(await api("/sync/status"));
                   onToast(
                     result.errors.length
-                      ? `Refresh finished with ${result.errors.length} error(s)`
+                      ? result.errors
+                          .map(
+                            (error: any) =>
+                              `${error.provider}: ${error.error}`
+                          )
+                          .join(" · ")
                       : "Everything is up to date"
                   );
                 }}
@@ -820,6 +932,38 @@ export function SettingsScreen({
                 Calendar: 5 minutes · conditions: 2 minutes · forecast: 10
                 minutes · weather alerts: 1 minute
               </p>
+              <div class="sync-provider-grid">
+                {syncDiagnostics.providers.map((provider: any) => (
+                  <article
+                    class={provider.last_error ? "sync-error" : "sync-ok"}
+                  >
+                    <strong>{provider.provider.replace("_", " ")}</strong>
+                    <span>
+                      {provider.last_error ? "Needs attention" : "Up to date"}
+                    </span>
+                    <small>
+                      Last success:{" "}
+                      {provider.last_success_at
+                        ? new Date(provider.last_success_at).toLocaleString()
+                        : "Never"}
+                    </small>
+                    {provider.last_error && <code>{provider.last_error}</code>}
+                  </article>
+                ))}
+              </div>
+              <details class="sync-log">
+                <summary>Recent synchronization log</summary>
+                {syncDiagnostics.log.map((entry: any) => (
+                  <div class={entry.status === "error" ? "error" : ""}>
+                    <time>
+                      {new Date(entry.attempted_at).toLocaleString()}
+                    </time>
+                    <strong>{entry.provider}</strong>
+                    <span>{entry.status}</span>
+                    {entry.message && <code>{entry.message}</code>}
+                  </div>
+                ))}
+              </details>
             </SettingsCard>
             <SettingsCard title="Software">
               <p>Application updates and Raspberry Pi OS updates are manual.</p>

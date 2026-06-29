@@ -2,6 +2,7 @@ import { useEffect, useState } from "preact/hooks";
 import { api, jsonBody } from "../api";
 import { ProductEntry } from "../components/ProductEntry";
 import { ShoppingItem } from "../types";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 
 interface Props {
   refreshToken: number;
@@ -11,6 +12,7 @@ interface Props {
 export function ShoppingScreen({ refreshToken, onToast }: Props) {
   const [items, setItems] = useState<ShoppingItem[]>([]);
   const [adding, setAdding] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
   const load = () =>
     api<ShoppingItem[]>("/shopping")
       .then(setItems)
@@ -40,12 +42,7 @@ export function ShoppingScreen({ refreshToken, onToast }: Props) {
           <button
             class="button secondary"
             disabled={!items.some((item) => item.purchased)}
-            onClick={async () => {
-              if (confirm("Clear all purchased items?")) {
-                await api("/shopping", { method: "DELETE" });
-                load();
-              }
-            }}
+            onClick={() => setConfirmClear(true)}
           >
             Clear purchased
           </button>
@@ -101,6 +98,20 @@ export function ShoppingScreen({ refreshToken, onToast }: Props) {
           onClose={() => setAdding(false)}
           onSaved={() => {
             setAdding(false);
+            load();
+          }}
+        />
+      )}
+      {confirmClear && (
+        <ConfirmDialog
+          title="Clear purchased items?"
+          message="Remove every checked item from the shopping list?"
+          confirmLabel="Yes, clear purchased"
+          cancelLabel="No, keep them"
+          onCancel={() => setConfirmClear(false)}
+          onConfirm={async () => {
+            await api("/shopping", { method: "DELETE" });
+            setConfirmClear(false);
             load();
           }}
         />

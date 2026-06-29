@@ -314,6 +314,10 @@ select:focus-visible {
   padding: 12px;
 }
 
+.weather-widget {
+  position: relative;
+}
+
 .widget-title {
   height: 32px;
   display: flex;
@@ -372,13 +376,20 @@ select:focus-visible {
 }
 
 .horizontal-forecast {
-  height: 125px;
+  height: 100px;
   display: flex;
   gap: 7px;
   overflow-x: auto;
   overflow-y: hidden;
-  scrollbar-width: thin;
+  scrollbar-width: none;
   overscroll-behavior: contain;
+  scroll-snap-type: x proximity;
+  touch-action: pan-x;
+  -webkit-overflow-scrolling: touch;
+}
+
+.horizontal-forecast::-webkit-scrollbar {
+  display: none;
 }
 
 .forecast-hour {
@@ -391,6 +402,8 @@ select:focus-visible {
   border-radius: 15px;
   background: rgba(255, 255, 255, 0.075);
   font-size: 0.7rem;
+  scroll-snap-align: center;
+  border: 2px solid transparent;
 }
 
 .forecast-hour b {
@@ -398,7 +411,39 @@ select:focus-visible {
 }
 
 .forecast-hour.daily {
-  background: rgba(255, 209, 132, 0.09);
+  flex-basis: 78px;
+}
+
+.forecast-hour.current-hour {
+  border: 3px solid rgba(222, 248, 255, 0.95);
+  box-shadow:
+    0 0 0 2px rgba(25, 71, 107, 0.35),
+    0 0 18px rgba(198, 238, 255, 0.45);
+}
+
+.forecast-mode-toggle {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  padding: 2px;
+  border-radius: 10px;
+  background: rgba(5, 26, 48, 0.25);
+}
+
+.forecast-mode-toggle button {
+  min-height: 26px;
+  padding: 2px 9px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--text-muted);
+  background: transparent;
+  font-size: 0.68rem;
+}
+
+.forecast-mode-toggle button.active {
+  color: white;
+  background: rgba(255, 255, 255, 0.16);
 }
 
 .checklist label {
@@ -443,6 +488,7 @@ select:focus-visible {
 
 .clock-button,
 .refresh-button,
+.scan-button,
 .running-timers button {
   height: 38px;
   border: 1px solid rgba(255, 255, 255, 0.16);
@@ -487,6 +533,91 @@ select:focus-visible {
 .refresh-button {
   width: 42px;
   font-size: 1.25rem;
+}
+
+.scan-button {
+  width: 42px;
+  font-size: 1.25rem;
+}
+
+.scan-now-dialog {
+  text-align: center;
+}
+
+.scan-now-icon {
+  width: 82px;
+  height: 82px;
+  margin: 4px auto 12px;
+  display: grid;
+  place-items: center;
+  border: 2px solid rgba(176, 224, 255, 0.7);
+  border-radius: 22px;
+  color: #d9f2ff;
+  background: rgba(81, 157, 212, 0.2);
+  font-size: 2.7rem;
+  animation: scanner-ready-pulse 1.8s ease-in-out infinite;
+}
+
+.hardware-test-result {
+  padding: 10px 12px;
+  border-radius: 12px;
+  color: #dfffea;
+  background: rgba(82, 177, 116, 0.24);
+}
+
+.sync-provider-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.sync-provider-grid article {
+  min-width: 0;
+  padding: 12px;
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--glass-border);
+  border-radius: 14px;
+  background: rgba(7, 27, 52, 0.2);
+}
+
+.sync-provider-grid article.sync-error {
+  border-color: rgba(245, 119, 119, 0.6);
+  background: rgba(135, 45, 48, 0.24);
+}
+
+.sync-provider-grid code,
+.sync-log code {
+  max-height: 84px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.7rem;
+}
+
+.sync-log {
+  margin-top: 14px;
+}
+
+.sync-log > div {
+  display: grid;
+  grid-template-columns: 150px 110px 70px 1fr;
+  gap: 8px;
+  padding: 7px 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 0.75rem;
+}
+
+.sync-log > div.error {
+  color: #ffd2d2;
+}
+
+@keyframes scanner-ready-pulse {
+  50% {
+    box-shadow: 0 0 24px rgba(109, 197, 255, 0.38);
+    transform: scale(1.03);
+  }
 }
 
 .running-timers {
@@ -954,6 +1085,103 @@ select:focus-visible {
   text-align: left;
 }
 
+.native-touch-field {
+  cursor: text;
+}
+
+.native-touch-field input,
+.native-touch-field textarea {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  color: var(--text);
+  background: transparent;
+  font: inherit;
+  resize: vertical;
+}
+
+.native-touch-field input::placeholder,
+.native-touch-field textarea::placeholder {
+  color: var(--text-muted);
+}
+
+.entry-native-input {
+  width: 100%;
+  min-height: 58px;
+  padding: 12px 16px;
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  outline: none;
+  color: var(--text);
+  background: rgba(4, 20, 38, 0.38);
+  font: inherit;
+  font-size: 1.1rem;
+}
+
+.entry-native-input:focus {
+  border-color: rgba(155, 211, 255, 0.75);
+  box-shadow: 0 0 0 3px rgba(100, 177, 236, 0.2);
+}
+
+.entry-native-input.multiline {
+  resize: vertical;
+}
+
+.confirm-dialog p {
+  margin: 4px 0 22px;
+  font-size: 1.05rem;
+  line-height: 1.5;
+}
+
+.confirm-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.confirm-action {
+  color: #072513;
+  background: #7fdda0;
+}
+
+.cancel-action {
+  color: #fff;
+  background: #c95359;
+}
+
+.swipe-action-row {
+  position: relative;
+  overflow: hidden;
+  border-radius: 10px;
+}
+
+.swipe-action-content {
+  position: relative;
+  z-index: 1;
+  background: rgba(30, 58, 85, 0.3);
+  transform: translateX(0);
+  transition: transform 180ms ease;
+  touch-action: pan-y;
+}
+
+.swipe-action-row.open .swipe-action-content {
+  transform: translateX(-58px);
+}
+
+.swipe-delete-action {
+  position: absolute;
+  z-index: 0;
+  top: 0;
+  right: 0;
+  width: 58px;
+  height: 100%;
+  border: 0;
+  color: white;
+  background: #c94d54;
+  font-size: 1.5rem;
+}
+
 .touch-field.active {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(120, 198, 255, 0.15);
@@ -1081,6 +1309,10 @@ select:focus-visible {
   padding: 8px 12px;
   border-radius: 13px;
   background: rgba(255, 255, 255, 0.055);
+}
+
+.calendar-setting-row.unavailable {
+  opacity: 0.55;
 }
 
 .setting-toggle input {

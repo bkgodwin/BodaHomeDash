@@ -21,7 +21,6 @@ export function WeatherCanvas({ code = 0, reduced = false }: Props) {
     if (!canvas || reduced) return;
     const context = canvas.getContext("2d");
     if (!context) return;
-    let frame = 0;
     let last = 0;
     let animation = 0;
     const snowy = [71, 73, 75, 77, 85, 86].includes(code);
@@ -90,10 +89,6 @@ export function WeatherCanvas({ code = 0, reduced = false }: Props) {
           context.arc(x, y, particle.size * 2, 0, Math.PI * 2);
           context.fill();
         }
-      }
-      if (stormy && ++frame % 210 === 0 && Math.random() > 0.55) {
-        context.fillStyle = "rgba(235,245,255,.22)";
-        context.fillRect(0, 0, canvas.width, canvas.height);
       }
     };
     resize();

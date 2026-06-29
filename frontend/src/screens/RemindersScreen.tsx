@@ -1,7 +1,8 @@
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { api, jsonBody } from "../api";
 import { Modal } from "../components/Modal";
 import { TouchKeyboard } from "../components/TouchKeyboard";
+import { onScreenKeyboardEnabled } from "../inputPreferences";
 import { Reminder } from "../types";
 
 interface Props {
@@ -13,6 +14,7 @@ export function RemindersScreen({ refreshToken, onToast }: Props) {
   const [items, setItems] = useState<Reminder[]>([]);
   const [adding, setAdding] = useState(false);
   const [text, setText] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
   const load = () =>
     api<Reminder[]>("/reminders")
       .then(setItems)
@@ -66,23 +68,38 @@ export function RemindersScreen({ refreshToken, onToast }: Props) {
       </div>
       {adding && (
         <Modal title="Add Reminder" onClose={() => setAdding(false)}>
-          <div class="entry-preview">{text || "Type a reminder…"}</div>
-          <TouchKeyboard
+          <input
+            ref={inputRef}
+            class="entry-native-input"
             value={text}
-            onChange={setText}
-            onConfirm={async () => {
-              if (!text.trim()) return;
-              await api("/reminders", {
-                method: "POST",
-                ...jsonBody({ text })
-              });
-              setText("");
-              setAdding(false);
-              load();
+            placeholder="Type a reminder…"
+            autofocus
+            onInput={(event) => setText(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") saveReminder();
             }}
           />
+          {onScreenKeyboardEnabled.value && (
+            <TouchKeyboard
+              value={text}
+              onChange={setText}
+              targetRef={inputRef}
+              onConfirm={saveReminder}
+            />
+          )}
         </Modal>
       )}
     </main>
   );
+
+  async function saveReminder() {
+    if (!text.trim()) return;
+    await api("/reminders", {
+      method: "POST",
+      ...jsonBody({ text })
+    });
+    setText("");
+    setAdding(false);
+    load();
+  }
 }

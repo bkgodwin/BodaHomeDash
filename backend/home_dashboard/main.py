@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import platform
 import shutil
@@ -62,6 +63,21 @@ secret_store = SecretStore(database, config.data_dir)
 auth = AuthManager(database, secret_store)
 backups = BackupManager(database, config.data_dir)
 services = DashboardServices(database, secret_store, backups, hub)
+logger = logging.getLogger(__name__)
+
+
+def schedule_background(coroutine, label: str) -> None:
+    task = asyncio.create_task(coroutine, name=label)
+
+    def finished(completed: asyncio.Task) -> None:
+        try:
+            completed.result()
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            logger.exception("Background task %s failed", label)
+
+    task.add_done_callback(finished)
 
 
 def is_local(request: Request) -> bool:
@@ -103,6 +119,7 @@ async def access_control(request: Request, call_next):
         "/api/v1/hardware",
         "/api/v1/backups",
         "/api/v1/system",
+        "/api/v1/sync",
     )
     if path.startswith(device_only) and not local:
         return JSONResponse(
@@ -138,6 +155,9 @@ def status(request: Request) -> dict[str, Any]:
             "garbage_pickup_weekday", 1
         ),
         "reduced_motion": database.setting("reduced_motion", False),
+        "onscreen_keyboard_enabled": database.setting(
+            "onscreen_keyboard_enabled", True
+        ),
         "platform": platform.system(),
         "time": utcnow(),
     }
@@ -301,17 +321,25 @@ async def connect_calendar(payload: CalendarConnect):
     secret_store.set(f"calendar_password_{account_id}", payload.app_password)
     colors = ["#6ea8fe", "#ff8a65", "#66d19e", "#c792ea", "#ffd166", "#58c4dc"]
     database.executemany(
-        """INSERT INTO calendars(account_id,remote_id,name,color,enabled)
-           VALUES(?,?,?,?,1)""",
+        """INSERT INTO calendars(
+               account_id,remote_id,name,color,enabled,available,shared,read_only
+           ) VALUES(?,?,?,?,1,1,?,?)""",
         [
-            (account_id, item.remote_id, item.name, colors[index % len(colors)])
+            (
+                account_id,
+                item.remote_id,
+                item.name,
+                colors[index % len(colors)],
+                int(item.shared),
+                int(item.read_only),
+            )
             for index, item in enumerate(remote_calendars)
         ],
     )
     calendars = database.all(
         "SELECT * FROM calendars WHERE account_id=? ORDER BY name", (account_id,)
     )
-    asyncio.create_task(services.sync_calendars())
+    schedule_background(services.sync_calendars(), "calendar-connect-sync")
     return {"account_id": account_id, "calendars": calendars}
 
 
@@ -320,8 +348,23 @@ def list_calendars():
     return database.all(
         """SELECT c.*,a.display_name AS account_name,a.provider
            FROM calendars c JOIN calendar_accounts a ON a.id=c.account_id
-           ORDER BY a.id,c.name"""
+           ORDER BY c.available DESC,a.id,c.name"""
     )
+
+
+@app.post("/api/v1/calendar/rediscover")
+async def rediscover_calendars():
+    try:
+        calendars = await services.rediscover_calendars()
+        await hub.broadcast(
+            "calendar.discovery.updated", {"count": len(calendars)}
+        )
+        return calendars
+    except Exception as error:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Calendar discovery failed: {error}",
+        ) from error
 
 
 @app.put("/api/v1/calendar/calendars")
@@ -339,7 +382,7 @@ async def select_calendars(payload: CalendarSelection):
                 connection.execute(
                     "UPDATE calendars SET color=? WHERE id=?", (color, calendar_id)
                 )
-    asyncio.create_task(services.sync_calendars())
+    schedule_background(services.sync_calendars(), "calendar-selection-sync")
     return list_calendars()
 
 
@@ -769,15 +812,40 @@ async def automatic_location():
 
 @app.post("/api/v1/refresh")
 async def refresh():
-    results = await asyncio.gather(
-        services.sync_weather(),
-        services.sync_alerts(),
-        services.sync_calendars(),
-        return_exceptions=True,
-    )
+    operations = {
+        "weather": services.sync_weather_forecast(),
+        "alerts": services.sync_alerts(),
+        "calendar": services.sync_calendars(),
+    }
+    values = await asyncio.gather(*operations.values(), return_exceptions=True)
+    providers: dict[str, dict[str, Any]] = {}
+    errors = []
+    for provider, result in zip(operations, values):
+        if isinstance(result, Exception):
+            services.record_sync_error(provider, result)
+            detail = {"provider": provider, "error": str(result)}
+            errors.append(detail)
+            providers[provider] = {"ok": False, "error": str(result)}
+        else:
+            providers[provider] = {"ok": True, "error": None}
     return {
         "completed_at": utcnow(),
-        "errors": [str(result) for result in results if isinstance(result, Exception)],
+        "providers": providers,
+        "errors": errors,
+    }
+
+
+@app.get("/api/v1/sync/status")
+def sync_status():
+    return {
+        "providers": database.all(
+            """SELECT provider,last_success_at,last_attempt_at,last_error
+               FROM sync_state ORDER BY provider"""
+        ),
+        "log": database.all(
+            """SELECT id,provider,status,message,attempted_at
+               FROM sync_log ORDER BY id DESC LIMIT 50"""
+        ),
     }
 
 
@@ -789,10 +857,16 @@ def activity():
 
 @app.get("/api/v1/hardware/devices")
 def hardware_devices():
+    system = platform.system()
     return {
         "input_devices": BarcodeMonitor.devices(),
         "display_output": database.setting("display_output", "HDMI-A-1"),
         "pir_pin": database.setting("motion_gpio_bcm", 17),
+        "platform": system,
+        "scanner_capture": "evdev" if system == "Linux" else "keyboard-wedge",
+        "audio_backend": "alsa" if system == "Linux" else (
+            "winsound" if system == "Windows" else "browser"
+        ),
     }
 
 

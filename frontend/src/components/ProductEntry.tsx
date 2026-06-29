@@ -1,7 +1,8 @@
-import { useState } from "preact/hooks";
+import { useRef, useState } from "preact/hooks";
 import { api, jsonBody } from "../api";
 import { Modal } from "./Modal";
 import { NumberPad, TouchKeyboard } from "./TouchKeyboard";
+import { onScreenKeyboardEnabled } from "../inputPreferences";
 
 export interface ProductSeed {
   product_id?: number;
@@ -31,7 +32,9 @@ export function ProductEntry({ seed = {}, destination, onClose, onSaved }: Props
   const [quantity, setQuantity] = useState(1);
   const [step, setStep] = useState<"details" | "expiration">("details");
   const [dateDigits, setDateDigits] = useState("");
+  const [dateError, setDateError] = useState("");
   const [saving, setSaving] = useState(false);
+  const activeInputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
 
   const setActiveValue = (value: string) =>
     setFields((current) => ({ ...current, [active]: value }));
@@ -102,13 +105,15 @@ export function ProductEntry({ seed = {}, destination, onClose, onSaved }: Props
           onConfirm={() => {
             const value = expirationValue();
             if (!value) {
-              alert("Enter a valid date in MM/DD/YYYY format.");
+              setDateError("Enter a valid date in MM/DD/YYYY format.");
               return;
             }
+            setDateError("");
             save(value);
           }}
           onSkip={() => save(null)}
         />
+        {dateError && <p class="field-error" role="alert">{dateError}</p>}
       </Modal>
     );
   }
@@ -130,13 +135,42 @@ export function ProductEntry({ seed = {}, destination, onClose, onSaved }: Props
             ["notes", "Notes"]
           ] as [keyof typeof fields, string][]
         ).map(([key, label]) => (
-          <button
-            class={`touch-field ${active === key ? "active" : ""}`}
-            onClick={() => setActive(key)}
-          >
+          <label class={`touch-field native-touch-field ${active === key ? "active" : ""}`}>
             <small>{label}</small>
-            <span>{fields[key] || `Enter ${label.toLowerCase()}`}</span>
-          </button>
+            {key === "notes" ? (
+              <textarea
+                value={fields[key]}
+                placeholder={`Enter ${label.toLowerCase()}`}
+                rows={2}
+                onFocus={(event) => {
+                  setActive(key);
+                  activeInputRef.current = event.currentTarget;
+                }}
+                onInput={(event) =>
+                  setFields((current) => ({
+                    ...current,
+                    [key]: event.currentTarget.value
+                  }))
+                }
+              />
+            ) : (
+              <input
+                value={fields[key]}
+                placeholder={`Enter ${label.toLowerCase()}`}
+                autofocus={key === "name"}
+                onFocus={(event) => {
+                  setActive(key);
+                  activeInputRef.current = event.currentTarget;
+                }}
+                onInput={(event) =>
+                  setFields((current) => ({
+                    ...current,
+                    [key]: event.currentTarget.value
+                  }))
+                }
+              />
+            )}
+          </label>
         ))}
         <div class="quantity-control">
           <span>Quantity</span>
@@ -145,13 +179,16 @@ export function ProductEntry({ seed = {}, destination, onClose, onSaved }: Props
           <button onClick={() => setQuantity(Math.min(999, quantity + 1))}>+</button>
         </div>
       </div>
-      <TouchKeyboard
-        value={fields[active]}
-        onChange={setActiveValue}
-        onConfirm={() =>
-          destination === "pantry" ? setStep("expiration") : save()
-        }
-      />
+      {onScreenKeyboardEnabled.value && (
+        <TouchKeyboard
+          value={fields[active]}
+          onChange={setActiveValue}
+          targetRef={activeInputRef}
+          onConfirm={() =>
+            destination === "pantry" ? setStep("expiration") : save()
+          }
+        />
+      )}
       <button
         class="button primary full-width"
         disabled={!fields.name.trim() || saving}

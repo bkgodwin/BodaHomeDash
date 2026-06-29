@@ -3,6 +3,7 @@ import { api } from "../api";
 import { Modal } from "../components/Modal";
 import { ProductEntry } from "../components/ProductEntry";
 import { Product } from "../types";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 
 interface Props {
   refreshToken: number;
@@ -15,6 +16,10 @@ export function PantryScreen({ refreshToken, onToast }: Props) {
   const [selected, setSelected] = useState<Product | null>(null);
   const [adding, setAdding] = useState(false);
   const holdTimer = useRef<number>();
+  const [pendingRemoval, setPendingRemoval] = useState<{
+    product: Product;
+    addToShopping: boolean;
+  } | null>(null);
 
   const load = () =>
     api<Product[]>("/pantry")
@@ -46,12 +51,6 @@ export function PantryScreen({ refreshToken, onToast }: Props) {
   ) => {
     const lot = product.lots[0];
     if (!lot) return;
-    if (
-      !confirm(
-        `${addToShopping ? "Remove and add" : "Remove"} one batch of ${product.name}?`
-      )
-    )
-      return;
     await api(
       `/pantry/lots/${lot.id}?add_to_shopping=${addToShopping}`,
       { method: "DELETE" }
@@ -111,7 +110,11 @@ export function PantryScreen({ refreshToken, onToast }: Props) {
                 class={`pantry-row ${expirationClass(product.nearest_expiration)}`}
                 onPointerDown={() => {
                   holdTimer.current = window.setTimeout(
-                    () => removeLot(product),
+                    () =>
+                      setPendingRemoval({
+                        product,
+                        addToShopping: false
+                      }),
                     700
                   );
                 }}
@@ -220,16 +223,51 @@ export function PantryScreen({ refreshToken, onToast }: Props) {
             <div class="modal-actions">
               <button
                 class="button secondary"
-                onClick={() => removeLot(selected, true)}
+                onClick={() =>
+                  setPendingRemoval({
+                    product: selected,
+                    addToShopping: true
+                  })
+                }
               >
                 Remove and add to shopping
               </button>
-              <button class="button danger" onClick={() => removeLot(selected)}>
+              <button
+                class="button danger"
+                onClick={() =>
+                  setPendingRemoval({
+                    product: selected,
+                    addToShopping: false
+                  })
+                }
+              >
                 Remove batch
               </button>
             </div>
           </div>
         </Modal>
+      )}
+      {pendingRemoval && (
+        <ConfirmDialog
+          title="Remove pantry batch?"
+          message={`${
+            pendingRemoval.addToShopping ? "Remove and add" : "Remove"
+          } one batch of ${pendingRemoval.product.name}?`}
+          confirmLabel={
+            pendingRemoval.addToShopping
+              ? "Confirm and add"
+              : "Confirm removal"
+          }
+          cancelLabel="No, keep it"
+          onCancel={() => setPendingRemoval(null)}
+          onConfirm={async () => {
+            await removeLot(
+              pendingRemoval.product,
+              pendingRemoval.addToShopping
+            );
+            setPendingRemoval(null);
+          }}
+        />
       )}
     </main>
   );

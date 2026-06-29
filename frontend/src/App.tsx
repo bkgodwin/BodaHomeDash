@@ -11,6 +11,12 @@ import { SettingsScreen } from "./screens/SettingsScreen";
 import { ShoppingScreen } from "./screens/ShoppingScreen";
 import { WeatherScreen } from "./screens/WeatherScreen";
 import { timeOfDayTheme } from "./theme";
+import { onScreenKeyboardEnabled } from "./inputPreferences";
+import {
+  installScannerCapture,
+  scannerQuickMode,
+  scannerTestMode
+} from "./scannerCapture";
 import {
   Status,
   Timer,
@@ -30,6 +36,7 @@ export function App() {
   const [status, setStatus] = useState<Status | null>(null);
   const [screen, setScreen] = useState<Screen>("home");
   const [refreshToken, setRefreshToken] = useState(0);
+  const [weatherRefreshToken, setWeatherRefreshToken] = useState(0);
   const [homeKey, setHomeKey] = useState(0);
   const [weather, setWeather] = useState<Weather | null>(null);
   const [alerts, setAlerts] = useState<WeatherAlert[]>([]);
@@ -46,6 +53,7 @@ export function App() {
   const [scanDestination, setScanDestination] = useState<
     "pantry" | "shopping" | null
   >(null);
+  const [scanPromptOpen, setScanPromptOpen] = useState(false);
 
   const showToast = (message: string) => {
     setToast(message);
@@ -54,7 +62,10 @@ export function App() {
 
   const loadStatus = () =>
     api<Status>("/status")
-      .then(setStatus)
+      .then((value) => {
+        onScreenKeyboardEnabled.value = value.onscreen_keyboard_enabled;
+        setStatus(value);
+      })
       .catch((error) => showToast(error.message));
 
   const loadAtmosphere = async (showOnApproach = false) => {
@@ -85,17 +96,27 @@ export function App() {
   useEffect(() => {
     if (!status?.authenticated) return;
     loadAtmosphere();
-    return openEventSocket((event, payload: any) => {
+    const closeSocket = openEventSocket((event, payload: any) => {
       if (
-        event.endsWith(".updated") ||
-        event === "timer.finished" ||
-        event === "backup.completed"
+        [
+          "calendar.updated",
+          "calendar.discovery.updated",
+          "pantry.updated",
+          "shopping.updated",
+          "reminders.updated",
+          "timers.updated",
+          "settings.updated"
+        ].includes(event) ||
+        event === "timer.finished"
       ) {
         setRefreshToken((value) => value + 1);
       }
       if (event === "settings.updated") loadStatus();
       if (event === "weather.updated" || event === "alerts.updated") {
         loadAtmosphere();
+        if (event === "weather.updated") {
+          setWeatherRefreshToken((value) => value + 1);
+        }
         if (payload?.emergency) setShowAlertDialog(true);
       }
       if (event === "timer.finished") setTimerAlert(payload as Timer);
@@ -112,9 +133,21 @@ export function App() {
       if (event === "backup.completed") showToast("USB backup completed");
       if (event === "backup.failed") showToast(`Backup failed: ${payload.error}`);
     });
+    const closeScanner = installScannerCapture((barcode) => {
+      if (scannerTestMode.value) return;
+      scannerQuickMode.value = false;
+      setScanPromptOpen(false);
+      beginScan(barcode);
+    });
+    return () => {
+      closeSocket();
+      closeScanner();
+    };
   }, [status?.authenticated]);
 
   const beginScan = async (barcode: string) => {
+    scannerTestMode.value = false;
+    scannerQuickMode.value = false;
     setScanned({ barcode, loading: true });
     try {
       const result = await api<any>(
@@ -146,10 +179,13 @@ export function App() {
     try {
       const result = await api<any>("/refresh", { method: "POST" });
       setRefreshToken((value) => value + 1);
+      setWeatherRefreshToken((value) => value + 1);
       await loadAtmosphere();
       showToast(
         result.errors.length
-          ? "Refresh completed with an offline service"
+          ? result.errors
+              .map((error: any) => `${error.provider}: ${error.error}`)
+              .join(" · ")
           : "Everything is up to date"
       );
     } catch (error: any) {
@@ -197,7 +233,7 @@ export function App() {
     >
       <WeatherCanvas
         code={Number(weather?.current?.weather_code || 0)}
-        reduced={false}
+        reduced={status.reduced_motion}
       />
       <nav class="main-nav glass">
         <button
@@ -244,6 +280,7 @@ export function App() {
           <HomeScreen
             key={homeKey}
             refreshToken={refreshToken}
+            weatherRefreshToken={weatherRefreshToken}
             onNavigate={(value) => setScreen(value as Screen)}
             onToast={showToast}
             onRefresh={refreshAll}
@@ -251,6 +288,10 @@ export function App() {
             garbagePickupEnabled={status.garbage_pickup_enabled}
             garbagePickupWeekday={status.garbage_pickup_weekday}
             reducedMotion={status.reduced_motion}
+            onScanNow={() => {
+              scannerQuickMode.value = true;
+              setScanPromptOpen(true);
+            }}
           />
         )}
         {screen === "pantry" && (
@@ -263,7 +304,10 @@ export function App() {
           <RemindersScreen refreshToken={refreshToken} onToast={showToast} />
         )}
         {screen === "weather" && (
-          <WeatherScreen refreshToken={refreshToken} onToast={showToast} />
+          <WeatherScreen
+            refreshToken={refreshToken + weatherRefreshToken}
+            onToast={showToast}
+          />
         )}
         {screen === "settings" && (
           <SettingsScreen onToast={showToast} />
@@ -349,6 +393,34 @@ export function App() {
           )}
         </Modal>
       )}
+      {scanPromptOpen && !scanned && (
+        <Modal
+          title="Scan a barcode"
+          onClose={() => {
+            scannerTestMode.value = false;
+            scannerQuickMode.value = false;
+            setScanPromptOpen(false);
+          }}
+        >
+          <div class="scan-now-dialog">
+            <div class="scan-now-icon">▥</div>
+            <h2>Scan now</h2>
+            <p>Hold a product barcode in front of the USB scanner.</p>
+            <p class="hint">The item options will open automatically.</p>
+            <button
+              type="button"
+              class="button cancel-action"
+              onClick={() => {
+                scannerTestMode.value = false;
+                scannerQuickMode.value = false;
+                setScanPromptOpen(false);
+              }}
+            >
+              Cancel scanning
+            </button>
+          </div>
+        </Modal>
+      )}
 
       {scanned && scanDestination && (
         <ProductEntry
@@ -395,7 +467,7 @@ function PinLogin({
         <p>Enter the household PIN.</p>
         <NumberPad
           value={pin}
-          display={"•".repeat(pin.length)}
+          secret
           onChange={(value) => setPin(value.slice(0, 12))}
           onConfirm={async () => {
             try {

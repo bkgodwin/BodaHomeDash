@@ -1,7 +1,16 @@
-import { useEffect, useMemo, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { api, jsonBody } from "../api";
 import { Modal } from "../components/Modal";
 import { NumberPad, TouchKeyboard } from "../components/TouchKeyboard";
+import { onScreenKeyboardEnabled } from "../inputPreferences";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { SwipeActionRow } from "../components/SwipeActionRow";
+import {
+  centeredHourlyIndices,
+  isNightAt,
+  roundTemperature,
+  weatherGradient
+} from "../weatherPresentation";
 import {
   CalendarData,
   CalendarEvent,
@@ -14,6 +23,7 @@ import {
 
 interface Props {
   refreshToken: number;
+  weatherRefreshToken: number;
   onNavigate: (screen: string) => void;
   onToast: (message: string) => void;
   onRefresh: () => void;
@@ -21,6 +31,7 @@ interface Props {
   garbagePickupEnabled: boolean;
   garbagePickupWeekday: number;
   reducedMotion: boolean;
+  onScanNow: () => void;
 }
 
 function keyForDate(value: Date): string {
@@ -30,8 +41,17 @@ function keyForDate(value: Date): string {
   return `${year}-${month}-${day}`;
 }
 
-function dateForEvent(value: string): string {
-  return keyForDate(new Date(value));
+function eventOccursOnDay(event: CalendarEvent, day: string): boolean {
+  if (event.all_day) {
+    return event.starts_at.slice(0, 10) <= day && event.ends_at.slice(0, 10) > day;
+  }
+  const start = new Date(`${day}T00:00:00`);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return (
+    new Date(event.starts_at).getTime() < end.getTime() &&
+    new Date(event.ends_at).getTime() > start.getTime()
+  );
 }
 
 function weatherSymbol(code = 0): string {
@@ -54,13 +74,15 @@ function monthBounds(month: Date) {
 
 export function HomeScreen({
   refreshToken,
+  weatherRefreshToken,
   onNavigate,
   onToast,
   onRefresh,
   clock24Hour,
   garbagePickupEnabled,
   garbagePickupWeekday,
-  reducedMotion
+  reducedMotion,
+  onScanNow
 }: Props) {
   const [month, setMonth] = useState(
     () => new Date(new Date().getFullYear(), new Date().getMonth(), 1)
@@ -80,21 +102,24 @@ export function HomeScreen({
   const [customTimer, setCustomTimer] = useState("");
   const [reminderEntry, setReminderEntry] = useState(false);
   const [reminderText, setReminderText] = useState("");
+  const reminderInputRef = useRef<HTMLInputElement>(null);
+  const [timerToCancel, setTimerToCancel] = useState<Timer | null>(null);
+  const [forecastMode, setForecastMode] = useState<"hourly" | "week">("hourly");
+  const hourlyStripRef = useRef<HTMLDivElement>(null);
+  const currentHourRef = useRef<HTMLDivElement>(null);
 
   const load = async () => {
     const { gridStart, gridEnd } = monthBounds(month);
-    const [calendarData, weatherData, shoppingData, reminderData, timerData] =
+    const [calendarData, shoppingData, reminderData, timerData] =
       await Promise.all([
         api<CalendarData>(
           `/calendar?start=${keyForDate(gridStart)}&end=${keyForDate(gridEnd)}`
         ),
-        api<Weather | null>("/weather"),
         api<ShoppingItem[]>("/shopping"),
         api<Reminder[]>("/reminders"),
         api<Timer[]>("/timers")
       ]);
     setCalendar(calendarData);
-    setWeather(weatherData);
     setShopping(shoppingData);
     setReminders(reminderData);
     setTimers(timerData);
@@ -103,6 +128,12 @@ export function HomeScreen({
   useEffect(() => {
     load().catch((error) => onToast(error.message));
   }, [month.getTime(), refreshToken]);
+
+  useEffect(() => {
+    api<Weather | null>("/weather")
+      .then(setWeather)
+      .catch((error) => onToast(error.message));
+  }, [weatherRefreshToken]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000);
@@ -120,11 +151,7 @@ export function HomeScreen({
 
   const selectedEvents =
     calendar.events.filter(
-      (event) =>
-        selectedDay &&
-        (event.all_day
-          ? event.starts_at.slice(0, 10)
-          : dateForEvent(event.starts_at)) === selectedDay
+      (event) => selectedDay && eventOccursOnDay(event, selectedDay)
     ) || [];
   const selectedHolidays =
     calendar.holidays.filter((holiday) => holiday.date === selectedDay) || [];
@@ -159,6 +186,13 @@ export function HomeScreen({
     );
   };
 
+  const deleteReminder = async (item: Reminder) => {
+    await api(`/reminders/${item.id}`, { method: "DELETE" });
+    setReminders((items) =>
+      items.filter((candidate) => candidate.id !== item.id)
+    );
+  };
+
   const addReminder = async () => {
     if (!reminderText.trim()) return;
     await api("/reminders", {
@@ -181,8 +215,31 @@ export function HomeScreen({
   };
 
   const current = weather?.current || {};
-  const hourlyTimes = (weather?.hourly?.time || []).slice(0, 24);
-  const dailyTimes = (weather?.daily?.time || []).slice(0, 7);
+  const hourlyIndices = useMemo(
+    () => centeredHourlyIndices(weather, now, 18),
+    [weather, now.getHours()]
+  );
+  const todayKey = keyForDate(now);
+  const dailyIndices = (weather?.daily?.time || [])
+    .map((_, index) => index)
+    .filter(
+      (index) => String(weather?.daily.time?.[index] || "") >= todayKey
+    )
+    .slice(0, 7);
+
+  useEffect(() => {
+    if (forecastMode !== "hourly") return;
+    const strip = hourlyStripRef.current;
+    const current = currentHourRef.current;
+    if (!strip || !current) return;
+    strip.scrollTo({
+      left:
+        current.offsetLeft -
+        strip.clientWidth / 2 +
+        current.clientWidth / 2,
+      behavior: "auto"
+    });
+  }, [weather, forecastMode]);
 
   return (
     <main class="home-screen">
@@ -219,10 +276,7 @@ export function HomeScreen({
           {days.map((day) => {
             const key = keyForDate(day);
             const events = calendar.events.filter(
-              (event) =>
-                (event.all_day
-                  ? event.starts_at.slice(0, 10)
-                  : dateForEvent(event.starts_at)) === key
+              (event) => eventOccursOnDay(event, key)
             );
             const dayHolidays = calendar.holidays.filter(
               (holiday) => holiday.date === key
@@ -272,57 +326,124 @@ export function HomeScreen({
       </section>
 
       <section class="widget-row">
-        <article class="widget weather-widget glass">
+        <article
+          class="widget weather-widget glass"
+          style={{
+            background: weatherGradient(
+              Number(current.weather_code || 0),
+              {
+                temperature: current.temperature_2m,
+                temperatureUnit: weather?.units.temperature
+              }
+            )
+          }}
+        >
           <button class="widget-heading" onClick={() => onNavigate("weather")}>
             <span class="weather-main-symbol">
               {weatherSymbol(Number(current.weather_code || 0))}
             </span>
             <span>
               <strong>
-                {current.temperature_2m ?? "—"}
+                {roundTemperature(current.temperature_2m)}
                 {weather?.units.temperature}
               </strong>
               <small>
-                Feels like {current.apparent_temperature ?? "—"}
+                Feels like {roundTemperature(current.apparent_temperature)}
                 {weather?.units.temperature}
               </small>
             </span>
           </button>
-          <div class="horizontal-forecast">
-            {hourlyTimes.map((item, index) => (
-              <div class="forecast-hour">
-                <span>
-                  {new Date(item).toLocaleTimeString([], { hour: "numeric" })}
-                </span>
-                <b>
-                  {weatherSymbol(
-                    Number(weather?.hourly.weather_code?.[index] || 0)
-                  )}
-                </b>
-                <span>
-                  {weather?.hourly.temperature_2m?.[index]}
-                  {weather?.units.temperature}
-                </span>
-              </div>
-            ))}
-            {dailyTimes.map((item, index) => (
-              <div class="forecast-hour daily">
-                <span>
-                  {new Date(`${item}T12:00`).toLocaleDateString([], {
-                    weekday: "short"
-                  })}
-                </span>
-                <b>
-                  {weatherSymbol(
-                    Number(weather?.daily.weather_code?.[index] || 0)
-                  )}
-                </b>
-                <span>
-                  {weather?.daily.temperature_2m_max?.[index]}°/
-                  {weather?.daily.temperature_2m_min?.[index]}°
-                </span>
-              </div>
-            ))}
+          <div class="forecast-mode-toggle">
+            <button
+              class={forecastMode === "hourly" ? "active" : ""}
+              onClick={() => setForecastMode("hourly")}
+            >
+              Hourly
+            </button>
+            <button
+              class={forecastMode === "week" ? "active" : ""}
+              onClick={() => setForecastMode("week")}
+            >
+              Week
+            </button>
+          </div>
+          <div ref={hourlyStripRef} class="horizontal-forecast">
+            {forecastMode === "hourly" &&
+              hourlyIndices.map((index) => {
+                const item = String(weather?.hourly.time?.[index] || "");
+                const itemDate = new Date(item);
+                const currentHour =
+                  itemDate.getFullYear() === now.getFullYear() &&
+                  itemDate.getMonth() === now.getMonth() &&
+                  itemDate.getDate() === now.getDate() &&
+                  itemDate.getHours() === now.getHours();
+                const code = Number(
+                  weather?.hourly.weather_code?.[index] || 0
+                );
+                return (
+                  <div
+                    ref={currentHour ? currentHourRef : undefined}
+                    class={`forecast-hour ${
+                      currentHour ? "current-hour" : ""
+                    }`}
+                    style={{
+                      background: weatherGradient(code, {
+                        night: isNightAt(weather, item),
+                        temperature:
+                          weather?.hourly.temperature_2m?.[index],
+                        temperatureUnit: weather?.units.temperature
+                      })
+                    }}
+                  >
+                    <span>
+                      {itemDate.toLocaleTimeString([], { hour: "numeric" })}
+                    </span>
+                    <b>{weatherSymbol(code)}</b>
+                    <span>
+                      {roundTemperature(
+                        weather?.hourly.temperature_2m?.[index]
+                      )}
+                      {weather?.units.temperature}
+                    </span>
+                  </div>
+                );
+              })}
+            {forecastMode === "week" &&
+              dailyIndices.map((index) => {
+                const item = String(weather?.daily.time?.[index] || "");
+                const code = Number(
+                  weather?.daily.weather_code?.[index] || 0
+                );
+                return (
+                  <div
+                    class="forecast-hour daily"
+                    style={{
+                      background: weatherGradient(code, {
+                        temperature:
+                          weather?.daily.temperature_2m_max?.[index],
+                        temperatureUnit: weather?.units.temperature
+                      })
+                    }}
+                  >
+                    <span>
+                      {new Date(`${item}T12:00`).toLocaleDateString([], {
+                        weekday: "short"
+                      })}
+                    </span>
+                    <b>{weatherSymbol(code)}</b>
+                    <span>
+                      {roundTemperature(
+                        weather?.daily.temperature_2m_max?.[index]
+                      )}
+                      °/
+                      {roundTemperature(
+                        weather?.daily.temperature_2m_min?.[index]
+                      )}
+                      °
+                    </span>
+                  </div>
+                );
+              })}
           </div>
         </article>
 
@@ -336,14 +457,19 @@ export function HomeScreen({
           <div class="widget-scroll checklist">
             {reminders.length === 0 && <p class="empty">Nothing pending</p>}
             {reminders.map((item) => (
-              <label class={item.completed ? "completed" : ""}>
-                <input
-                  type="checkbox"
-                  checked={Boolean(item.completed)}
-                  onChange={() => toggleReminder(item)}
-                />
-                <span>{item.text}</span>
-              </label>
+              <SwipeActionRow
+                actionLabel={`Delete ${item.text}`}
+                onAction={() => deleteReminder(item)}
+              >
+                <label class={item.completed ? "completed" : ""}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(item.completed)}
+                    onChange={() => toggleReminder(item)}
+                  />
+                  <span>{item.text}</span>
+                </label>
+              </SwipeActionRow>
             ))}
           </div>
         </article>
@@ -392,16 +518,19 @@ export function HomeScreen({
         <button class="refresh-button" onClick={onRefresh} aria-label="Refresh dashboard">
           ↻
         </button>
+        <button
+          class="scan-button"
+          onClick={onScanNow}
+          aria-label="Scan a barcode"
+          title="Scan a barcode"
+        >
+          ▥
+        </button>
         <div class="running-timers">
           {timers.map((timer) => (
             <button
               class={timer.status === "finished" ? "timer-finished" : ""}
-              onClick={async () => {
-                if (confirm(`Cancel ${timer.label}?`)) {
-                  await api(`/timers/${timer.id}`, { method: "DELETE" });
-                  load();
-                }
-              }}
+              onClick={() => setTimerToCancel(timer)}
             >
               {timer.label}{" "}
               {timer.status === "finished"
@@ -452,13 +581,40 @@ export function HomeScreen({
 
       {reminderEntry && (
         <Modal title="Add Reminder" onClose={() => setReminderEntry(false)}>
-          <div class="entry-preview">{reminderText || "Type a reminder…"}</div>
-          <TouchKeyboard
+          <input
+            ref={reminderInputRef}
+            class="entry-native-input"
             value={reminderText}
-            onChange={setReminderText}
-            onConfirm={addReminder}
+            placeholder="Type a reminder…"
+            autofocus
+            onInput={(event) => setReminderText(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") addReminder();
+            }}
           />
+          {onScreenKeyboardEnabled.value && (
+            <TouchKeyboard
+              value={reminderText}
+              onChange={setReminderText}
+              targetRef={reminderInputRef}
+              onConfirm={addReminder}
+            />
+          )}
         </Modal>
+      )}
+      {timerToCancel && (
+        <ConfirmDialog
+          title="Cancel timer?"
+          message={`Cancel ${timerToCancel.label}?`}
+          confirmLabel="Yes, cancel timer"
+          cancelLabel="No, keep timer"
+          onCancel={() => setTimerToCancel(null)}
+          onConfirm={async () => {
+            await api(`/timers/${timerToCancel.id}`, { method: "DELETE" });
+            setTimerToCancel(null);
+            load();
+          }}
+        />
       )}
     </main>
   );

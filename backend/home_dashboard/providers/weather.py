@@ -69,6 +69,7 @@ class WeatherProvider:
                 if temperature_unit == "fahrenheit"
                 else "mm",
                 "forecast_days": 8,
+                "past_days": 1,
                 "current": ",".join(
                     [
                         "temperature_2m",
@@ -119,6 +120,54 @@ class WeatherProvider:
             "daily": data.get("daily", {}),
             "fetched_at": datetime.now(UTC).isoformat(),
             "attribution": "Weather data by Open-Meteo.com",
+        }
+
+    async def current(
+        self,
+        latitude: float,
+        longitude: float,
+        temperature_unit: str = "fahrenheit",
+        wind_unit: str = "mph",
+    ) -> dict[str, Any]:
+        response = await self.client.get(
+            "https://api.open-meteo.com/v1/forecast",
+            params={
+                "latitude": latitude,
+                "longitude": longitude,
+                "timezone": "auto",
+                "temperature_unit": temperature_unit,
+                "wind_speed_unit": wind_unit,
+                "precipitation_unit": "inch"
+                if temperature_unit == "fahrenheit"
+                else "mm",
+                "current": ",".join(
+                    [
+                        "temperature_2m",
+                        "apparent_temperature",
+                        "relative_humidity_2m",
+                        "precipitation",
+                        "weather_code",
+                        "cloud_cover",
+                        "wind_speed_10m",
+                        "wind_direction_10m",
+                    ]
+                ),
+            },
+            timeout=15,
+        )
+        response.raise_for_status()
+        data = response.json()
+        return {
+            "current": data.get("current", {}),
+            "units": {
+                "temperature": data.get("current_units", {}).get(
+                    "temperature_2m", "°F"
+                ),
+                "wind": data.get("current_units", {}).get(
+                    "wind_speed_10m", "mph"
+                ),
+            },
+            "fetched_at": datetime.now(UTC).isoformat(),
         }
 
 

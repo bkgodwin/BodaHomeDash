@@ -15,6 +15,8 @@ class RemoteCalendar:
     remote_id: str
     name: str
     url: str
+    shared: bool = False
+    read_only: bool = True
 
 
 class ICloudCalendarProvider:
@@ -36,21 +38,23 @@ class ICloudCalendarProvider:
         return await asyncio.to_thread(self._discover_sync)
 
     def _discover_sync(self) -> list[RemoteCalendar]:
-        calendars = self._principal().calendars()
+        principal = self._principal()
+        home = principal.calendar_home_set
+        children = home.children(caldav.elements.cdav.Calendar.tag)
         result = []
-        for calendar in calendars:
-            properties = calendar.get_properties(
-                [caldav.elements.dav.DisplayName()]
-            )
-            name = (
-                properties.get("{DAV:}displayname")
-                or str(calendar.url).rstrip("/").split("/")[-1]
+        for calendar_url, resource_types, display_name in children:
+            name = display_name or str(calendar_url).rstrip("/").split("/")[-1]
+            shared = any(
+                str(resource_type).endswith("}shared")
+                for resource_type in resource_types
             )
             result.append(
                 RemoteCalendar(
-                    remote_id=str(calendar.url),
+                    remote_id=str(calendar_url),
                     name=str(name),
-                    url=str(calendar.url),
+                    url=str(calendar_url),
+                    shared=shared,
+                    read_only=True,
                 )
             )
         return result
@@ -65,8 +69,13 @@ class ICloudCalendarProvider:
     def _events_sync(
         self, calendar_url: str, starts: datetime, ends: datetime
     ) -> list[dict[str, Any]]:
+        # iCloud discovers calendars on per-account shard hosts. The caldav
+        # library correctly refuses to join an absolute URL from another host,
+        # so event clients must use the discovered shard URL as their base.
         client = caldav.DAVClient(
-            url=self.server, username=self.username, password=self.app_password
+            url=calendar_url,
+            username=self.username,
+            password=self.app_password,
         )
         remote = caldav.Calendar(client=client, url=calendar_url)
         objects = remote.search(start=starts, end=ends, event=True, expand=False)
@@ -77,15 +86,18 @@ class ICloudCalendarProvider:
             occurrences = recurring_ical_events.of(parsed).between(starts, ends)
             for component in occurrences:
                 start_value = component.decoded("DTSTART")
+                has_end = component.get("DTEND") is not None
                 end_value = component.decoded("DTEND", start_value)
                 all_day = isinstance(start_value, date) and not isinstance(
                     start_value, datetime
                 )
-                starts_at = self._as_datetime(start_value, False)
-                ends_at = self._as_datetime(end_value, all_day)
+                starts_at = self._as_datetime(start_value)
+                ends_at = self._as_datetime(end_value)
+                if all_day and not has_end:
+                    ends_at += timedelta(days=1)
                 recurrence = component.get("RECURRENCE-ID")
                 recurrence_value = (
-                    self._as_datetime(recurrence.dt, all_day).isoformat()
+                    self._as_datetime(recurrence.dt).isoformat()
                     if recurrence is not None
                     else ""
                 )
@@ -106,11 +118,9 @@ class ICloudCalendarProvider:
         return result
 
     @staticmethod
-    def _as_datetime(value: date | datetime, end_of_day: bool) -> datetime:
+    def _as_datetime(value: date | datetime) -> datetime:
         if isinstance(value, datetime):
             if value.tzinfo is None:
                 return value.replace(tzinfo=UTC)
             return value
-        return datetime.combine(value, time.min, tzinfo=UTC) + (
-            timedelta(days=1) if end_of_day else timedelta()
-        )
+        return datetime.combine(value, time.min, tzinfo=UTC)
