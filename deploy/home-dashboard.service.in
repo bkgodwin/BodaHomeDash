@@ -1,0 +1,29 @@
+[Unit]
+Description=Home Dashboard service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+Group=@USER@
+WorkingDirectory=/opt/home-dashboard
+Environment=HOME_DASHBOARD_DATA=/var/lib/home-dashboard
+Environment=HOME_DASHBOARD_STATIC=/opt/home-dashboard/frontend/dist
+Environment=HOME_DASHBOARD_HOST=0.0.0.0
+Environment=HOME_DASHBOARD_PORT=8765
+Environment=PYTHONUNBUFFERED=1
+Environment=XDG_RUNTIME_DIR=/run/user/@UID@
+Environment=WAYLAND_DISPLAY=wayland-1
+ExecStart=/opt/home-dashboard/.venv/bin/home-dashboard
+Restart=always
+RestartSec=3
+TimeoutStopSec=20
+# The service uses two sudoers-allowlisted helpers for Wi-Fi and self-restart.
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/home-dashboard
+
+[Install]
+WantedBy=multi-user.target

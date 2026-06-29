@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" != "connect" ]]; then
+  echo "Only the connect operation is supported." >&2
+  exit 2
+fi
+
+ssid="${2:-}"
+password="${3:-}"
+if [[ -z "$ssid" || "$ssid" == -* || ${#ssid} -gt 64 ]]; then
+  echo "Invalid SSID." >&2
+  exit 2
+fi
+
+if [[ -n "$password" ]]; then
+  exec nmcli device wifi connect "$ssid" password "$password"
+else
+  exec nmcli device wifi connect "$ssid"
+fi

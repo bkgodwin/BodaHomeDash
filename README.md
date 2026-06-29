@@ -1,0 +1,104 @@
+# Home Dashboard
+
+A local-first household calendar and kitchen dashboard for a Raspberry Pi 4
+Model B (2 GB) and a 1920×1080 touchscreen.
+
+The current implementation includes:
+
+- a full-month, read-only iCloud calendar with multiple calendar selection;
+- Louisiana/US holidays and pantry expiration markers;
+- current, hourly, and daily weather from Open-Meteo;
+- NWS alerts, with emergency-only display wake and one gentle audio chime;
+- barcode lookup through a local cache and Open Food Facts;
+- pantry inventory with separate expiration batches;
+- shared shopping lists and reminders;
+- persistent kitchen timers with HDMI audio;
+- PIR-controlled HDMI sleep or instant black-screen blanking;
+- PIN-protected phone layouts on the local network;
+- optional encrypted USB backups restorable during a fresh setup;
+- an optional garbage-pickup-day reminder beside the clock; and
+- a touch-first setup wizard and on-screen keyboards.
+
+## Hardware target
+
+- Raspberry Pi 4 Model B, 2 GB RAM
+- Raspberry Pi OS Desktop 64-bit
+- 14-inch 1920×1080 HDMI/USB touchscreen
+- HC-SR501 PIR sensor
+- Tera USB hands-free barcode scanner
+- 15W (5V/3A) USB-C Pi power supply
+- separate monitor power supply
+- high-endurance microSD card
+
+See [Hardware](docs/HARDWARE.md) for wiring and safety notes.
+
+## Install on Raspberry Pi
+
+Flash Raspberry Pi OS Desktop 64-bit and use Raspberry Pi Imager to set a
+desktop username, password, Wi-Fi, hostname, locale, and SSH access. Then copy
+or clone this repository and run:
+
+```bash
+sudo ./deploy/install.sh
+sudo reboot
+```
+
+The installer is idempotent and configures dependencies, the backend service,
+desktop autologin, Chromium kiosk startup, hardware permissions, and local
+network access. On the next boot, the touchscreen setup wizard opens
+automatically.
+
+See [Installation](docs/INSTALLATION.md) for the complete procedure and
+[Backups](docs/BACKUPS.md) for fresh-install recovery.
+
+## Development
+
+Backend:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[test]"
+pytest
+```
+
+Frontend:
+
+```bash
+cd frontend
+pnpm install
+pnpm test
+pnpm build
+```
+
+Run the combined application:
+
+```bash
+HOME_DASHBOARD_DEBUG=1 home-dashboard
+```
+
+Open `http://127.0.0.1:8765`.
+
+## Data and privacy
+
+Household data is stored locally in SQLite. Apple app-specific passwords, the
+remote-access PIN hash, and the backup recovery password are encrypted using a
+device-local key. USB backup bundles use AES-GCM with a key derived from the
+user's separate recovery password.
+
+The application contacts iCloud CalDAV, Open-Meteo, the National Weather
+Service, Open Food Facts, and the optional IP location provider. It does not
+require a cloud account of its own.
+
+Do not expose port 8765 directly to the internet. Use a trusted home network or
+Tailscale. Tailscale HTTPS is recommended for access away from home.
+
+## Project status
+
+This is the first working implementation. Automated backend/frontend tests and
+a production frontend build are included. GPIO, HDMI sleep, scanner identity,
+touch calibration, and HDMI audio still require final validation on the exact
+Raspberry Pi and attached hardware.
+
+The full agreed specification is preserved in
+[Project Plan](docs/PROJECT_PLAN.md).
