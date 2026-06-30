@@ -239,6 +239,7 @@ export function App() {
   const visibleAlerts = alerts.filter((alert) => !alert.dismissed);
   const emergency = visibleAlerts.find((alert) => alert.severity === "Extreme");
   const regularAlert = visibleAlerts[0];
+  const dialogAlert = previewAlert || emergency || regularAlert;
 
   return (
     <div
@@ -253,6 +254,8 @@ export function App() {
         reduced={status.reduced_motion}
         effect={status.weather_effects}
         windSpeed={Number(weather?.current?.wind_speed_10m || 0)}
+        isDay={Boolean(Number(weather?.current?.is_day ?? 1))}
+        cloudCover={Number(weather?.current?.cloud_cover || 0)}
       />
       <nav class="main-nav glass">
         <button
@@ -341,6 +344,12 @@ export function App() {
           <SettingsScreen onToast={showToast} />
         )}
       </div>
+      {screen === "home" && (
+        <footer class="app-credits" aria-label="Dashboard information">
+          <span>Mobile Dash @ {status.mobile_dash_address}</span>
+          <span>BodaDash | Made by Ben Godwin for Koda Godwin | Open Source | V1.0 (July 2026)</span>
+        </footer>
+      )}
 
       {showAlertDialog && (previewAlert || emergency || regularAlert) && (
         <Modal
@@ -351,7 +360,7 @@ export function App() {
                 ? "Emergency Weather Alert"
                 : "Weather Alert"
           }
-          danger={Boolean(previewAlert?.severity === "Extreme" || emergency)}
+          severity={dialogAlert?.severity === "Extreme" ? "emergency" : "warning"}
         >
           <article class="active-alert">
             <h2>{(previewAlert || emergency || regularAlert).event}</h2>

@@ -43,53 +43,110 @@ class DisplayController:
 
 
 class AudioController:
+    def __init__(self):
+        self._stops: dict[str, threading.Event] = {}
+        self._lock = threading.Lock()
+
     def play(self, kind: str = "timer", volume: int = 60) -> bool:
+        return self.play_bursts(kind, volume, [1])
+
+    def repeat(
+        self,
+        kind: str,
+        volume: int,
+        key: str,
+        max_seconds: float = 10,
+    ) -> bool:
+        return self._start_sequence(kind, volume, key, None, max_seconds)
+
+    def play_bursts(
+        self,
+        kind: str,
+        volume: int,
+        bursts: list[int],
+        key: str | None = None,
+    ) -> bool:
+        return self._start_sequence(
+            kind,
+            volume,
+            key or f"once-{time.monotonic_ns()}",
+            bursts,
+            None,
+        )
+
+    def stop(self, key: str) -> None:
+        with self._lock:
+            event = self._stops.get(key)
+        if event:
+            event.set()
+
+    def _start_sequence(
+        self,
+        kind: str,
+        volume: int,
+        key: str,
+        bursts: list[int] | None,
+        max_seconds: float | None,
+    ) -> bool:
+        if platform.system() not in {"Windows", "Linux"}:
+            return False
+        self.stop(key)
+        stop = threading.Event()
+        with self._lock:
+            self._stops[key] = stop
+        threading.Thread(
+            target=self._sequence_worker,
+            args=(kind, volume, key, stop, bursts, max_seconds),
+            daemon=True,
+        ).start()
+        return True
+
+    def _sequence_worker(
+        self,
+        kind: str,
+        volume: int,
+        key: str,
+        stop: threading.Event,
+        bursts: list[int] | None,
+        max_seconds: float | None,
+    ) -> None:
+        started = time.monotonic()
+        groups = bursts or [10_000]
+        try:
+            for group_index, count in enumerate(groups):
+                for _ in range(count):
+                    if stop.is_set():
+                        return
+                    if max_seconds is not None and time.monotonic() - started >= max_seconds:
+                        return
+                    self._play_once(kind, volume)
+                    stop.wait(0.18)
+                if group_index < len(groups) - 1:
+                    stop.wait(1.0)
+        finally:
+            with self._lock:
+                if self._stops.get(key) is stop:
+                    self._stops.pop(key, None)
+
+    def _play_once(self, kind: str, volume: int) -> None:
         frequency = 660 if kind == "timer" else 523
         notes = [(frequency, 0.20), (frequency * 1.25, 0.24)]
         path = self._tone(notes, volume)
-        if platform.system() == "Windows":
-            try:
-                threading.Thread(
-                    target=self._play_windows, args=(path,), daemon=True
-                ).start()
-                return True
-            except Exception:
-                path.unlink(missing_ok=True)
-                return False
-        if platform.system() != "Linux":
-            path.unlink(missing_ok=True)
-            return False
         try:
-            process = subprocess.Popen(
-                ["aplay", "-q", str(path)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            threading.Thread(
-                target=self._cleanup_tone, args=(process, path), daemon=True
-            ).start()
-            return True
-        except Exception:
-            path.unlink(missing_ok=True)
-            return False
+            if platform.system() == "Windows":
+                import winsound
 
-    @staticmethod
-    def _play_windows(path: Path) -> None:
-        try:
-            import winsound
-
-            winsound.PlaySound(
-                str(path), winsound.SND_FILENAME | winsound.SND_NODEFAULT
-            )
-        finally:
-            path.unlink(missing_ok=True)
-
-    @staticmethod
-    def _cleanup_tone(process: subprocess.Popen, path: Path) -> None:
-        try:
-            process.wait(timeout=30)
-        except Exception:
-            process.kill()
+                winsound.PlaySound(
+                    str(path), winsound.SND_FILENAME | winsound.SND_NODEFAULT
+                )
+            else:
+                subprocess.run(
+                    ["aplay", "-q", str(path)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=8,
+                    check=False,
+                )
         finally:
             path.unlink(missing_ok=True)
 

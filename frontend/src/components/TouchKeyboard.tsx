@@ -21,13 +21,15 @@ interface KeyboardProps {
   onChange: (value: string) => void;
   onConfirm: () => void;
   targetRef?: TargetRef;
+  compact?: boolean;
 }
 
 export function TouchKeyboard({
   value,
   onChange,
   onConfirm,
-  targetRef
+  targetRef,
+  compact = false
 }: KeyboardProps) {
   const [shifted, setShifted] = useState(false);
   const [symbols, setSymbols] = useState(false);
@@ -70,7 +72,7 @@ export function TouchKeyboard({
 
   const rows = symbols ? symbolRows : letterRows;
   return (
-    <div class="touch-keyboard" aria-label="On-screen keyboard">
+    <div class={`touch-keyboard ${compact ? "touch-keyboard-compact" : ""}`} aria-label="On-screen keyboard">
       {!symbols && (
         <div class="keyboard-row number-row">
           {["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"].map(

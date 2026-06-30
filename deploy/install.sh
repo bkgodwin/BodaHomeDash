@@ -25,13 +25,12 @@ echo "[1/8] Installing Raspberry Pi packages..."
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y \
   python3 python3-venv python3-pip python3-dev build-essential \
-  chromium curl rsync wlr-randr alsa-utils network-manager \
+  chromium curl git rsync wlr-randr alsa-utils network-manager \
   liblgpio-dev
 
 echo "[2/8] Installing Home Dashboard..."
 install -d -m 0755 /opt/home-dashboard
 rsync -a --delete \
-  --exclude '.git' \
   --exclude '.venv' \
   --exclude 'frontend/node_modules' \
   --exclude 'data' \
@@ -58,11 +57,14 @@ install -m 0755 /opt/home-dashboard/deploy/network-helper \
 cat >"/etc/sudoers.d/home-dashboard" <<EOF
 $TARGET_USER ALL=(root) NOPASSWD: /usr/local/lib/home-dashboard-network-helper *
 $TARGET_USER ALL=(root) NOPASSWD: /usr/bin/systemctl restart home-dashboard.service
+$TARGET_USER ALL=(root) NOPASSWD: /usr/bin/systemctl start --no-block home-dashboard-update.service
 EOF
 chmod 0440 /etc/sudoers.d/home-dashboard
 
 # Match the path used by the backend while retaining the more readable installed name.
 install -d -m 0755 /usr/local/lib/home-dashboard
+install -m 0755 /opt/home-dashboard/deploy/update.sh \
+  /usr/local/lib/home-dashboard/update.sh
 ln -sfn /usr/local/lib/home-dashboard-network-helper \
   /usr/local/lib/home-dashboard/network-helper
 
@@ -72,6 +74,9 @@ sed \
   -e "s/@UID@/$TARGET_UID/g" \
   /opt/home-dashboard/deploy/home-dashboard.service.in \
   >/etc/systemd/system/home-dashboard.service
+systemctl daemon-reload
+install -m 0644 /opt/home-dashboard/deploy/home-dashboard-update.service \
+  /etc/systemd/system/home-dashboard-update.service
 systemctl daemon-reload
 systemctl enable home-dashboard.service
 

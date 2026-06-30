@@ -370,21 +370,25 @@ export function HomeScreen({
                 {weather?.units.temperature}
               </small>
             </span>
-            <span class="weather-details-link">Detailed Conditions ›</span>
           </button>
-          <div class="forecast-mode-toggle">
-            <button
-              class={forecastMode === "hourly" ? "active" : ""}
-              onClick={() => setForecastMode("hourly")}
-            >
-              Hourly
+          <div class="weather-widget-toolbar">
+            <button class="weather-details-link" onClick={() => onNavigate("weather")}>
+              Detailed Conditions ›
             </button>
-            <button
-              class={forecastMode === "week" ? "active" : ""}
-              onClick={() => setForecastMode("week")}
-            >
-              Week
-            </button>
+            <div class="forecast-mode-toggle">
+              <button
+                class={forecastMode === "hourly" ? "active" : ""}
+                onClick={() => setForecastMode("hourly")}
+              >
+                Hourly
+              </button>
+              <button
+                class={forecastMode === "week" ? "active" : ""}
+                onClick={() => setForecastMode("week")}
+              >
+                Week
+              </button>
+            </div>
           </div>
           <div ref={hourlyStripRef} class="horizontal-forecast">
             {forecastMode === "hourly" &&

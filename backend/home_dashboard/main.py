@@ -14,6 +14,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import holidays
+import psutil
 import uvicorn
 from fastapi import (
     Cookie,
@@ -65,6 +66,29 @@ auth = AuthManager(database, secret_store)
 backups = BackupManager(database, config.data_dir)
 services = DashboardServices(database, secret_store, backups, hub)
 logger = logging.getLogger(__name__)
+
+
+def ipv4_interfaces() -> list[dict[str, str]]:
+    addresses: list[dict[str, str]] = []
+    for interface, entries in psutil.net_if_addrs().items():
+        for entry in entries:
+            if entry.family.name == "AF_INET" and entry.address != "127.0.0.1":
+                addresses.append({"interface": interface, "address": entry.address})
+    return sorted(
+        addresses,
+        key=lambda item: (
+            0 if item["address"].startswith(("192.168.", "10.", "172.")) else 1,
+            item["interface"].lower(),
+        ),
+    )
+
+
+def mobile_dash_address() -> str:
+    available = ipv4_interfaces()
+    selected = database.setting("mobile_dash_ipv4", "")
+    if any(item["address"] == selected for item in available):
+        return f"{selected}:{config.port}"
+    return f"{available[0]['address']}:{config.port}" if available else f"localhost:{config.port}"
 
 
 def schedule_background(coroutine, label: str) -> None:
@@ -163,7 +187,17 @@ def status(request: Request) -> dict[str, Any]:
             "onscreen_keyboard_enabled", True
         ),
         "platform": platform.system(),
+        "mobile_dash_address": mobile_dash_address(),
         "time": utcnow(),
+    }
+
+
+@app.get("/api/v1/network/interfaces")
+def network_interfaces():
+    return {
+        "interfaces": ipv4_interfaces(),
+        "selected": database.setting("mobile_dash_ipv4", ""),
+        "port": config.port,
     }
 
 
@@ -472,15 +506,16 @@ async def add_pantry(payload: PantryAdd):
         if not product_id:
             cursor = connection.execute(
                 """INSERT INTO products(
-                    name,normalized_name,brand,category,package_size,notes,source,
+                    name,normalized_name,brand,category,package_size,serving_size,notes,source,
                     date_added,date_last_used
-                ) VALUES(?,?,?,?,?,?,'manual',?,?)""",
+                ) VALUES(?,?,?,?,?,?,?,'manual',?,?)""",
                 (
                     payload.name,
                     normalize_name(payload.name),
                     payload.brand,
                     payload.category,
                     payload.package_size,
+                    payload.serving_size,
                     payload.notes,
                     now,
                     now,
@@ -677,12 +712,30 @@ def shopping():
 @app.post("/api/v1/shopping")
 async def create_shopping(payload: ShoppingCreate):
     now = utcnow()
+    normalized = normalize_name(payload.name)
     barcode = payload.barcode
     if barcode:
         try:
             barcode = normalize_barcode(barcode)
         except ValueError:
             barcode = payload.barcode
+    existing = database.one(
+        """SELECT * FROM shopping_items
+           WHERE purchased=0 AND (
+             (? IS NOT NULL AND product_id=?) OR normalized_name=? OR
+             (? IS NOT NULL AND barcode=?)
+           )
+           ORDER BY id LIMIT 1""",
+        (payload.product_id, payload.product_id, normalized, barcode, barcode),
+    )
+    if existing:
+        database.execute(
+            "UPDATE shopping_items SET quantity=quantity+?,updated_at=? WHERE id=?",
+            (payload.quantity, now, existing["id"]),
+        )
+        row = database.one("SELECT * FROM shopping_items WHERE id=?", (existing["id"],))
+        await hub.broadcast("shopping.updated", row)
+        return row
     cursor = database.execute(
         """INSERT INTO shopping_items(
             name,normalized_name,product_id,barcode,quantity,position,
@@ -690,7 +743,7 @@ async def create_shopping(payload: ShoppingCreate):
         ) VALUES(?,?,?,?,?,(SELECT COALESCE(MAX(position),0)+1 FROM shopping_items),?,?)""",
         (
             payload.name,
-            normalize_name(payload.name),
+            normalized,
             payload.product_id,
             barcode,
             payload.quantity,
@@ -831,6 +884,7 @@ async def dismiss_timer(timer_id: int):
         "UPDATE timers SET status='dismissed',dismissed_at=? WHERE id=?",
         (utcnow(), timer_id),
     )
+    services.audio.stop(f"timer-{timer_id}")
     await hub.broadcast("timers.updated", {"dismissed": timer_id})
     return Response(status_code=204)
 
@@ -998,6 +1052,21 @@ async def hardware_test(payload: HardwareTest):
         },
     }
     if payload.kind in previews:
+        severity = previews[payload.kind]["severity"]
+        if severity == "Extreme":
+            services.audio.play_bursts(
+                "alert",
+                int(database.setting("alert_volume", 55)),
+                [3, 3],
+                key="weather-preview",
+            )
+        else:
+            services.audio.play_bursts(
+                "alert",
+                int(database.setting("alert_volume", 55)),
+                [1],
+                key="weather-preview",
+            )
         await hub.broadcast(
             "weather.alert.test",
             {
@@ -1137,6 +1206,85 @@ def restart_service():
             stderr=subprocess.DEVNULL,
         )
     return {"restarting": True}
+
+
+@app.get("/api/v1/system/metrics")
+def system_metrics():
+    memory = psutil.virtual_memory()
+    disk = psutil.disk_usage(str(config.data_dir))
+    temperatures = {}
+    try:
+        temperatures = psutil.sensors_temperatures()
+    except Exception:
+        pass
+    temperature = next(
+        (
+            reading.current
+            for readings in temperatures.values()
+            for reading in readings
+            if reading.current is not None
+        ),
+        None,
+    )
+    return {
+        "platform": platform.system(),
+        "cpu_percent": psutil.cpu_percent(interval=0.15),
+        "cpu_count": psutil.cpu_count(),
+        "memory_percent": memory.percent,
+        "memory_used": memory.used,
+        "memory_total": memory.total,
+        "memory_used_gb": round(memory.used / (1024**3), 1),
+        "memory_total_gb": round(memory.total / (1024**3), 1),
+        "storage_percent": disk.percent,
+        "storage_used": disk.used,
+        "storage_total": disk.total,
+        "storage_used_gb": round(disk.used / (1024**3), 1),
+        "storage_total_gb": round(disk.total / (1024**3), 1),
+        "temperature_c": temperature,
+        "cpu_temperature_c": temperature,
+        "boot_time": datetime.fromtimestamp(psutil.boot_time(), UTC).isoformat(),
+    }
+
+
+@app.post("/api/v1/system/update")
+def update_application():
+    if platform.system() != "Linux":
+        raise HTTPException(
+            status_code=400,
+            detail="One-click updates are available on Raspberry Pi installations.",
+        )
+    try:
+        subprocess.run(
+            [
+                "sudo",
+                "-n",
+                "systemctl",
+                "start",
+                "--no-block",
+                "home-dashboard-update.service",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+    except subprocess.CalledProcessError as error:
+        raise HTTPException(
+            status_code=500,
+            detail=error.stderr.strip() or "Could not start the update service",
+        ) from error
+    return {"started": True, "message": "Update started. The dashboard will restart."}
+
+
+@app.get("/api/v1/system/update/status")
+def update_status():
+    path = config.data_dir / "update-status.json"
+    if not path.exists():
+        return {"state": "idle"}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {"state": "unknown"}
 
 
 @app.websocket("/api/v1/events")

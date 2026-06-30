@@ -86,6 +86,7 @@ CREATE TABLE IF NOT EXISTS products (
     brand TEXT NOT NULL DEFAULT '',
     category TEXT NOT NULL DEFAULT '',
     package_size TEXT NOT NULL DEFAULT '',
+    serving_size TEXT NOT NULL DEFAULT '',
     notes TEXT NOT NULL DEFAULT '',
     source TEXT NOT NULL DEFAULT 'manual',
     image_url TEXT NOT NULL DEFAULT '',
@@ -232,12 +233,13 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "reduced_motion": False,
     "onscreen_keyboard_enabled": True,
     "alert_wake_severities": ["Extreme"],
-    "alert_sound_severities": ["Extreme"],
+    "alert_sound_severities": ["Severe", "Extreme"],
     "alert_volume": 55,
     "timer_volume": 60,
     "scanner_device": "",
     "auto_purchase_match": True,
     "remote_access_enabled": False,
+    "mobile_dash_ipv4": "",
     "backup_enabled": False,
     "backup_path": "",
     "backup_retention": 7,
@@ -302,6 +304,17 @@ class Database:
                 connection.execute(
                     "ALTER TABLE inventory_lots "
                     "ADD COLUMN notes TEXT NOT NULL DEFAULT ''"
+                )
+            product_columns = {
+                row[1]
+                for row in connection.execute(
+                    "PRAGMA table_info(products)"
+                ).fetchall()
+            }
+            if "serving_size" not in product_columns:
+                connection.execute(
+                    "ALTER TABLE products "
+                    "ADD COLUMN serving_size TEXT NOT NULL DEFAULT ''"
                 )
             now = utcnow()
             connection.executemany(

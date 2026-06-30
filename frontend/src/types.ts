@@ -11,6 +11,7 @@ export interface Status {
   onscreen_keyboard_enabled: boolean;
   weather_effects: "off" | "subtle" | "full";
   display_awake_lock: boolean;
+  mobile_dash_address: string;
   time: string;
 }
 
@@ -62,6 +63,7 @@ export interface Product {
   brand: string;
   category: string;
   package_size: string;
+  serving_size: string;
   notes: string;
   source: string;
   image_url: string;

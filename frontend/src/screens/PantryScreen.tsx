@@ -1,11 +1,18 @@
-import { useEffect, useMemo, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { api } from "../api";
 import { Modal } from "../components/Modal";
 import { ProductEntry } from "../components/ProductEntry";
 import { Product } from "../types";
 import { ConfirmDialog } from "../components/ConfirmDialog";
-import { TouchInput } from "../components/TouchInput";
-import { nutritionFacts } from "../nutrition";
+import { TouchKeyboard } from "../components/TouchKeyboard";
+import {
+  availableNutritionBases,
+  matchesNutritionFilter,
+  nutritionFacts,
+  NutritionBasis,
+  NutritionFilter
+} from "../nutrition";
+import { onScreenKeyboardEnabled } from "../inputPreferences";
 
 interface Props {
   refreshToken: number;
@@ -24,6 +31,9 @@ export function PantryScreen({ refreshToken, onToast }: Props) {
   const [selectedLots, setSelectedLots] = useState<number[]>([]);
   const [editingLot, setEditingLot] = useState<number | null>(null);
   const [lotNotes, setLotNotes] = useState("");
+  const [nutritionFilter, setNutritionFilter] = useState<NutritionFilter | null>(null);
+  const [nutritionBasis, setNutritionBasis] = useState<NutritionBasis>("serving");
+  const noteRef = useRef<HTMLTextAreaElement>(null);
 
   const load = () =>
     api<Product[]>("/pantry")
@@ -38,10 +48,13 @@ export function PantryScreen({ refreshToken, onToast }: Props) {
     const needle = search.toLowerCase();
     return products.filter(
       (product) =>
+        (!nutritionFilter || matchesNutritionFilter(product.nutrition, nutritionFilter)) &&
+        (
         product.name.toLowerCase().includes(needle) ||
         product.brand.toLowerCase().includes(needle)
+        )
     );
-  }, [products, search]);
+  }, [products, search, nutritionFilter]);
 
   const jumpTo = (letter: string) => {
     document
@@ -84,6 +97,24 @@ export function PantryScreen({ refreshToken, onToast }: Props) {
     onToast(`Used one ${product.name}`);
   };
 
+  const addToShopping = async (product: Product) => {
+    const barcode =
+      typeof product.barcodes === "string"
+        ? product.barcodes.split(",")[0]
+        : product.barcodes?.[0]?.barcode;
+    await api("/shopping", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: product.name,
+        quantity: 1,
+        product_id: product.id,
+        barcode: barcode || null
+      })
+    });
+    onToast(`Added one ${product.name} to shopping`);
+  };
+
   const expirationClass = (value: string | null) => {
     if (!value) return "";
     const days = Math.floor(
@@ -116,6 +147,23 @@ export function PantryScreen({ refreshToken, onToast }: Props) {
         <div class="alphabet-strip">
           {"ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").map((letter) => (
             <button onClick={() => jumpTo(letter)}>{letter}</button>
+          ))}
+        </div>
+        <div class="pantry-filter-strip" role="group" aria-label="Nutrition filters">
+          {([
+            ["zero-calorie", "0 Calorie"],
+            ["zero-sugar", "0 Sugar"],
+            ["high-fiber", "High fiber"],
+            ["low-sodium", "Low sodium"]
+          ] as [NutritionFilter, string][]).map(([value, label]) => (
+            <button
+              type="button"
+              class={nutritionFilter === value ? "active" : ""}
+              aria-pressed={nutritionFilter === value}
+              onClick={() => setNutritionFilter(nutritionFilter === value ? null : value)}
+            >
+              {label}
+            </button>
           ))}
         </div>
       </div>
@@ -161,16 +209,28 @@ export function PantryScreen({ refreshToken, onToast }: Props) {
                     ? `Nearest: ${new Date(`${product.nearest_expiration}T12:00`).toLocaleDateString()}`
                     : "No expiration"}
                 </span>
-                <button
-                  class="pantry-minus"
-                  aria-label={`Use one ${product.name}`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    consumeOne(product).catch((error) => onToast(error.message));
-                  }}
-                >
-                  −
-                </button>
+                <span class="pantry-row-actions">
+                  <button
+                    class="pantry-cart"
+                    aria-label={`Add ${product.name} to shopping list`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      addToShopping(product).catch((error) => onToast(error.message));
+                    }}
+                  >
+                    🛒
+                  </button>
+                  <button
+                    class="pantry-minus"
+                    aria-label={`Use one ${product.name}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      consumeOne(product).catch((error) => onToast(error.message));
+                    }}
+                  >
+                    −
+                  </button>
+                </span>
               </div>
             </>
           );
@@ -201,6 +261,10 @@ export function PantryScreen({ refreshToken, onToast }: Props) {
               <p>
                 <strong>Package:</strong>{" "}
                 {selected.package_size || "Not recorded"}
+              </p>
+              <p>
+                <strong>Serving:</strong>{" "}
+                {selected.serving_size || "Not recorded"}
               </p>
               <p>
                 <strong>Barcode:</strong>{" "}
@@ -253,9 +317,33 @@ export function PantryScreen({ refreshToken, onToast }: Props) {
             {selected.nutrition &&
               Object.keys(selected.nutrition).length > 0 && (
                 <section>
-                  <h3>Nutrition facts</h3>
+                  <header class="nutrition-heading">
+                    <h3>Nutrition facts</h3>
+                    <div class="segmented compact">
+                      {availableNutritionBases(
+                        selected.nutrition,
+                        selected.serving_size,
+                        selected.package_size
+                      ).map((basis) => (
+                        <button
+                          type="button"
+                          class={nutritionBasis === basis ? "active" : ""}
+                          onClick={() => setNutritionBasis(basis)}
+                        >
+                          {basis === "100g" ? "100 g" : basis === "container" ? "Container" : "Serving"}
+                        </button>
+                      ))}
+                    </div>
+                  </header>
                   <div class="nutrition-grid">
-                    {nutritionFacts(selected.nutrition).map((fact) => (
+                    {nutritionFacts(
+                      selected.nutrition,
+                      availableNutritionBases(selected.nutrition, selected.serving_size, selected.package_size).includes(nutritionBasis)
+                        ? nutritionBasis
+                        : "100g",
+                      selected.serving_size,
+                      selected.package_size
+                    ).map((fact) => (
                         <span>
                           <small>{fact.label}</small>
                           <strong>{fact.value}</strong>
@@ -335,13 +423,29 @@ export function PantryScreen({ refreshToken, onToast }: Props) {
         />
       )}
       {editingLot !== null && (
-        <Modal title="Batch notes" onClose={() => setEditingLot(null)}>
-          <TouchInput
-            label="Notes"
-            value={lotNotes}
-            multiline
-            onChange={setLotNotes}
-          />
+        <Modal title="Batch notes" onClose={() => setEditingLot(null)} wide>
+          <div class="batch-note-editor">
+            <label class="touch-field">
+              <small>Notes</small>
+              <textarea
+                ref={noteRef}
+                rows={3}
+                value={lotNotes}
+                autofocus
+                placeholder="Add a note about this batch"
+                onInput={(event) => setLotNotes((event.currentTarget as HTMLTextAreaElement).value)}
+              />
+            </label>
+            {onScreenKeyboardEnabled.value && (
+              <TouchKeyboard
+                compact
+                targetRef={noteRef}
+                value={lotNotes}
+                onChange={setLotNotes}
+                onConfirm={() => noteRef.current?.blur()}
+              />
+            )}
+          </div>
           <button
             class="button primary full-width"
             onClick={async () => {

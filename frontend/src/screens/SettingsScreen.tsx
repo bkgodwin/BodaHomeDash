@@ -34,6 +34,7 @@ export function SettingsScreen({
   const [foundBackups, setFoundBackups] = useState<any[]>([]);
   const [devices, setDevices] = useState<any>({ input_devices: [] });
   const [networks, setNetworks] = useState<any[]>([]);
+  const [interfaces, setInterfaces] = useState<any[]>([]);
   const [wifiPassword, setWifiPassword] = useState("");
   const [selectedSsid, setSelectedSsid] = useState("");
   const [busy, setBusy] = useState(false);
@@ -42,18 +43,24 @@ export function SettingsScreen({
     providers: [],
     log: []
   });
+  const [metrics, setMetrics] = useState<any>(null);
+  const [updateStatus, setUpdateStatus] = useState<any>(null);
 
   const load = async () => {
-    const [values, calendarValues, deviceValues, syncValues] = await Promise.all([
+    const [values, calendarValues, deviceValues, syncValues, interfaceValues] = await Promise.all([
       api<Settings>("/settings"),
       api<any[]>("/calendar/calendars"),
       api<any>("/hardware/devices"),
-      api<any>("/sync/status")
+      api<any>("/sync/status"),
+      api<any>("/network/interfaces")
     ]);
     setSettings(values);
     setCalendars(calendarValues);
     setDevices(deviceValues);
     setSyncDiagnostics(syncValues);
+    setInterfaces(interfaceValues.interfaces || []);
+    api<any>("/system/metrics").then(setMetrics).catch(() => undefined);
+    api<any>("/system/update/status").then(setUpdateStatus).catch(() => undefined);
   };
   useEffect(() => {
     load().catch((error) => onToast(error.message));
@@ -734,8 +741,8 @@ export function SettingsScreen({
               </div>
               <h3>Weather alert previews</h3>
               <p class="hint">
-                These previews are not saved and do not trigger the emergency
-                sound.
+                These previews are not saved. Each includes the same visual and
+                audio pattern used by a real advisory, warning, or emergency.
               </p>
               <div class="button-row">
                 {[
@@ -771,6 +778,30 @@ export function SettingsScreen({
                 Save hardware settings
               </button>
             </SettingsCard>
+            {!setupMode && metrics && (
+              <SettingsCard title="Hardware utilization">
+                <div class="metric-grid">
+                  {[
+                    ["CPU", metrics.cpu_percent, `${metrics.cpu_count} cores`],
+                    ["Memory", metrics.memory_percent, `${metrics.memory_used_gb} / ${metrics.memory_total_gb} GB`],
+                    ["Storage", metrics.storage_percent, `${metrics.storage_used_gb} / ${metrics.storage_total_gb} GB`]
+                  ].map(([label, percent, detail]) => (
+                    <article>
+                      <span><strong>{label}</strong><b>{percent}%</b></span>
+                      <progress max="100" value={Number(percent)} />
+                      <small>{detail}</small>
+                    </article>
+                  ))}
+                </div>
+                <p class="hint">
+                  {metrics.platform} · Uptime since {new Date(metrics.boot_time).toLocaleString()}
+                  {metrics.cpu_temperature_c != null ? ` · CPU ${metrics.cpu_temperature_c}°C` : ""}
+                </p>
+                <button class="button secondary" onClick={() => api<any>("/system/metrics").then(setMetrics)}>
+                  Refresh utilization
+                </button>
+              </SettingsCard>
+            )}
             {setupMode && (
               <button class="button primary" onClick={() => setTab("security")}>
                 Continue
@@ -780,6 +811,27 @@ export function SettingsScreen({
         )}
 
         {tab === "network" && (
+          <>
+          <SettingsCard title="Mobile Dash address">
+            <p>Choose the local or VPN address shown in the home-screen reminder.</p>
+            <label class="settings-field">
+              <span>Displayed IPv4 address</span>
+              <select
+                value={settings.mobile_dash_ipv4 || ""}
+                onChange={(event) => {
+                  const value = (event.currentTarget as HTMLSelectElement).value;
+                  setSettings({ ...settings, mobile_dash_ipv4: value });
+                  save({ mobile_dash_ipv4: value }, "Mobile Dash address updated");
+                }}
+              >
+                <option value="">Automatic (recommended)</option>
+                {interfaces.map((item) => (
+                  <option value={item.address}>{item.interface} — {item.address}</option>
+                ))}
+              </select>
+            </label>
+            {!interfaces.length && <p class="hint">No active non-loopback IPv4 addresses were found.</p>}
+          </SettingsCard>
           <SettingsCard title="Wi-Fi">
             <button
               class="button secondary"
@@ -827,6 +879,7 @@ export function SettingsScreen({
               </>
             )}
           </SettingsCard>
+          </>
         )}
 
         {tab === "security" && (
@@ -1007,13 +1060,36 @@ export function SettingsScreen({
               </details>
             </SettingsCard>
             <SettingsCard title="Software">
-              <p>Application updates and Raspberry Pi OS updates are manual.</p>
+              <p>Update BodaDash from the latest GitHub main branch with one tap. Raspberry Pi OS updates remain manual.</p>
+              {updateStatus?.state && (
+                <p class={`update-status update-${updateStatus.state}`}>
+                  <strong>{updateStatus.state}</strong>
+                  {updateStatus.message ? ` · ${updateStatus.message}` : ""}
+                </p>
+              )}
+              <div class="button-row">
+                <button
+                  class="button primary"
+                  disabled={updateStatus?.state === "running" || metrics?.platform !== "Linux"}
+                  onClick={async () => {
+                    try {
+                      const result = await api<any>("/system/update", { method: "POST" });
+                      setUpdateStatus({ state: "running", message: result.message });
+                      onToast("Update started. BodaDash will restart automatically.");
+                    } catch (error: any) {
+                      onToast(error.message);
+                    }
+                  }}
+                >
+                  {metrics?.platform === "Linux" ? "Update BodaDash" : "Update BodaDash (Raspberry Pi)"}
+                </button>
               <button
                 class="button secondary"
                 onClick={() => api("/system/restart", { method: "POST" })}
               >
                 Restart dashboard service
               </button>
+              </div>
             </SettingsCard>
           </>
         )}

@@ -15,6 +15,7 @@ export interface ProductSeed {
   brand?: string;
   category?: string;
   package_size?: string;
+  serving_size?: string;
 }
 
 interface Props {
@@ -30,6 +31,7 @@ export function ProductEntry({ seed = {}, destination, onClose, onSaved }: Props
     brand: seed.brand || "",
     category: seed.category || "",
     package_size: seed.package_size || "",
+    serving_size: seed.serving_size || "",
     notes: ""
   });
   const [active, setActive] = useState<keyof typeof fields>("name");
@@ -111,6 +113,7 @@ export function ProductEntry({ seed = {}, destination, onClose, onSaved }: Props
             ["brand", "Brand"],
             ["category", "Category"],
             ["package_size", "Package size"],
+            ["serving_size", "Serving size"],
             ["notes", "Notes"]
           ] as [keyof typeof fields, string][]
         ).map(([key, label]) => (

@@ -39,6 +39,89 @@ function formatValue(value: unknown, digits = 0): string {
   return Number.isFinite(number) ? number.toFixed(digits) : "—";
 }
 
+function WindCompass({
+  direction,
+  speed,
+  gust,
+  unit
+}: {
+  direction: number;
+  speed: number;
+  gust: number;
+  unit: string;
+}) {
+  return (
+    <article class="wind-compass-card">
+      <small>Wind</small>
+      <div class="wind-compass">
+        {["N", "E", "S", "W"].map((point) => <b class={`point-${point.toLowerCase()}`}>{point}</b>)}
+        <i style={{ transform: `rotate(${direction}deg)` }}>▲</i>
+        <span>
+          <strong>{formatValue(speed)}</strong>
+          <small>{unit.replace("mp/h", "mph")}</small>
+        </span>
+      </div>
+      <p>{compassDirection(direction)} · Gusts {formatValue(gust)} {unit.replace("mp/h", "mph")}</p>
+    </article>
+  );
+}
+
+function TemperatureGraph({
+  weather,
+  indices
+}: {
+  weather: Weather;
+  indices: number[];
+}) {
+  const [mode, setMode] = useState<"temperature_2m" | "apparent_temperature">("temperature_2m");
+  const values = indices.map((index) => Number(weather.hourly[mode]?.[index] ?? 0));
+  const low = Math.floor((Math.min(...values) - 5) / 10) * 10;
+  const high = Math.ceil((Math.max(...values) + 5) / 10) * 10;
+  const range = Math.max(10, high - low);
+  const width = Math.max(1100, indices.length * 96);
+  const height = 210;
+  const points = values.map((value, index) => ({
+    x: 48 + index * ((width - 80) / Math.max(1, values.length - 1)),
+    y: 20 + ((high - value) / range) * 150
+  }));
+  const path = points.reduce(
+    (result, point, index) =>
+      index === 0
+        ? `M ${point.x} ${point.y}`
+        : `${result} Q ${(points[index - 1].x + point.x) / 2} ${points[index - 1].y}, ${point.x} ${point.y}`,
+    ""
+  );
+  const area = `${path} L ${points.at(-1)?.x || width - 30} 185 L ${points[0]?.x || 48} 185 Z`;
+  const lines = [];
+  for (let value = low; value <= high; value += 10) lines.push(value);
+  return (
+    <section class="temperature-graph">
+      <header>
+        <strong>{mode === "temperature_2m" ? "Temperature" : "Feels like"} trend</strong>
+        <div class="segmented compact">
+          <button class={mode === "temperature_2m" ? "active" : ""} onClick={() => setMode("temperature_2m")}>Temperature</button>
+          <button class={mode === "apparent_temperature" ? "active" : ""} onClick={() => setMode("apparent_temperature")}>Feels like</button>
+        </div>
+      </header>
+      <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" style={{ width }}>
+        <defs>
+          <linearGradient id="temperature-fill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="rgba(255,255,255,.36)" />
+            <stop offset="100%" stop-color="rgba(180,220,255,.03)" />
+          </linearGradient>
+        </defs>
+        {lines.map((value) => {
+          const y = 20 + ((high - value) / range) * 150;
+          return <g><line x1="40" x2={width - 20} y1={y} y2={y} /><text x="4" y={y + 5}>{value}°</text></g>;
+        })}
+        <path class="temperature-area" d={area} />
+        <path class="temperature-line" d={path} />
+        {points.map((point, index) => <g><circle cx={point.x} cy={point.y} r="3" /><text class="graph-value" x={point.x} y={point.y - 10}>{Math.round(values[index])}°</text></g>)}
+      </svg>
+    </section>
+  );
+}
+
 export function WeatherScreen({
   refreshToken,
   onToast
@@ -106,14 +189,6 @@ export function WeatherScreen({
       concern:
         Number(current.apparent_temperature) >= 103 ||
         Number(current.apparent_temperature) <= 0
-    },
-    {
-      label: "Wind",
-      value: `${formatValue(current.wind_speed_10m)} ${weather.units.wind.replace("mp/h", "mph")} ${compassDirection(Number(current.wind_direction_10m))}`,
-      secondary: `Gusts ${formatValue(current.wind_gusts_10m)} ${weather.units.wind.replace("mp/h", "mph")}`,
-      concern:
-        Number(current.wind_speed_10m) >= 25 ||
-        Number(current.wind_gusts_10m) >= 35
     },
     {
       label: "Humidity",
@@ -200,14 +275,26 @@ export function WeatherScreen({
       ))}
       {tab === "conditions" && (
         <div class="conditions-layout">
-          <section class="condition-card-grid">
-            {detailCards.map((card) => (
-              <article class={card.concern ? "condition-concern" : ""}>
-                <small>{card.label}</small>
-                <strong>{card.value}</strong>
-                <span>{card.secondary}</span>
-              </article>
-            ))}
+          <section class="condition-dashboard">
+            <article class="condition-now-card">
+              <span>{symbol(Number(current.weather_code))}</span>
+              <div><small>Right now</small><strong>{roundTemperature(current.temperature_2m)}{weather.units.temperature}</strong><p>{apparentLabel} {roundTemperature(current.apparent_temperature)}{weather.units.temperature}</p></div>
+            </article>
+            <WindCompass
+              direction={Number(current.wind_direction_10m)}
+              speed={Number(current.wind_speed_10m)}
+              gust={Number(current.wind_gusts_10m)}
+              unit={weather.units.wind}
+            />
+            <div class="condition-card-grid">
+              {detailCards.map((card) => (
+                <article class={card.concern ? "condition-concern" : ""}>
+                  <small>{card.label}</small>
+                  <strong>{card.value}</strong>
+                  <span>{card.secondary}</span>
+                </article>
+              ))}
+            </div>
           </section>
           <section class="radar-panel">
             <header>
@@ -222,35 +309,22 @@ export function WeatherScreen({
         </div>
       )}
       {tab === "hourly" && (
-        <div class="weather-detail-grid weather-tab-content">
-          {hourlyIndices.map((index) => {
-            const time = String(weather.hourly.time[index]);
-            const code = Number(weather.hourly.weather_code[index]);
-            return (
-              <article
-                style={{
-                  background: weatherGradient(code, {
-                    weather,
-                    timestamp: time,
-                    temperature: weather.hourly.temperature_2m[index],
-                    temperatureUnit: weather.units.temperature
-                  })
-                }}
-              >
-                <span>
-                  {new Date(time).toLocaleTimeString([], { hour: "numeric" })}
-                </span>
-                <b>{symbol(code)}</b>
-                <strong>
-                  {roundTemperature(weather.hourly.temperature_2m[index])}
-                  {weather.units.temperature}
-                </strong>
-                <small>
-                  {weather.hourly.precipitation_probability[index]}% rain
-                </small>
-              </article>
-            );
-          })}
+        <div class="hourly-weather-scroll weather-tab-content">
+          <div class="weather-detail-grid">
+            {hourlyIndices.map((index) => {
+              const time = String(weather.hourly.time[index]);
+              const code = Number(weather.hourly.weather_code[index]);
+              return (
+                <article style={{ background: weatherGradient(code, { weather, timestamp: time, temperature: weather.hourly.temperature_2m[index], temperatureUnit: weather.units.temperature }) }}>
+                  <span>{new Date(time).toLocaleTimeString([], { hour: "numeric" })}</span>
+                  <b>{symbol(code)}</b>
+                  <strong>{roundTemperature(weather.hourly.temperature_2m[index])}{weather.units.temperature}</strong>
+                  <small>{weather.hourly.precipitation_probability[index]}% rain</small>
+                </article>
+              );
+            })}
+          </div>
+          <TemperatureGraph weather={weather} indices={hourlyIndices} />
         </div>
       )}
       {tab === "week" && (

@@ -16,6 +16,7 @@ class ProductInput(BaseModel):
     brand: str = Field(default="", max_length=120)
     category: str = Field(default="", max_length=120)
     package_size: str = Field(default="", max_length=80)
+    serving_size: str = Field(default="", max_length=80)
     notes: str = Field(default="", max_length=1000)
 
     @field_validator("name")

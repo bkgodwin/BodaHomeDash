@@ -272,9 +272,10 @@ class DashboardServices:
             )
             sound_severities = set(
                 self.database.setting("alert_sound_severities", ["Extreme"])
-            )
+            ) | {"Severe", "Extreme"}
             new_emergency = False
             sound_emergency = False
+            sound_warning = False
             for item in alerts:
                 existing = self.database.one(
                     "SELECT updated_at, announced FROM weather_alerts WHERE alert_id=?",
@@ -320,9 +321,13 @@ class DashboardServices:
                 ):
                     new_emergency = True
                 if changed and (
-                    item["severity"] in sound_severities or emergency
+                    item["severity"] in (sound_severities | {"Severe", "Extreme"})
+                    or emergency
                 ):
-                    sound_emergency = True
+                    if emergency or item["severity"] == "Extreme":
+                        sound_emergency = True
+                    else:
+                        sound_warning = True
                 if changed:
                     self.database.execute(
                         "DELETE FROM alert_dismissals WHERE alert_id=?",
@@ -331,8 +336,18 @@ class DashboardServices:
             if new_emergency:
                 self.wake()
             if sound_emergency:
-                self.audio.play(
-                    "alert", int(self.database.setting("alert_volume", 55))
+                self.audio.play_bursts(
+                    "alert",
+                    int(self.database.setting("alert_volume", 55)),
+                    [3, 3],
+                    key="weather-alert",
+                )
+            elif sound_warning:
+                self.audio.play_bursts(
+                    "alert",
+                    int(self.database.setting("alert_volume", 55)),
+                    [1],
+                    key="weather-alert",
                 )
             selected_severities = sound_severities | wake_severities
             if (new_emergency or sound_emergency) and selected_severities:
@@ -499,16 +514,17 @@ class DashboardServices:
         with self.database.transaction() as connection:
             cursor = connection.execute(
                 """INSERT INTO products(
-                    name,normalized_name,brand,category,package_size,source,
+                    name,normalized_name,brand,category,package_size,serving_size,source,
                     image_url,nutrition_json,ingredients,allergens,
                     raw_provider_json,date_added,date_last_used
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     remote["name"],
                     normalize_name(remote["name"]),
                     remote["brand"],
                     remote["category"],
                     remote["package_size"],
+                    remote.get("serving_size", ""),
                     remote["source"],
                     remote["image_url"],
                     json.dumps(remote["nutrition"]),
@@ -585,8 +601,11 @@ class DashboardServices:
                     (timer["id"],),
                 )
                 self.wake()
-                self.audio.play(
-                    "timer", int(self.database.setting("timer_volume", 60))
+                self.audio.repeat(
+                    "timer",
+                    int(self.database.setting("timer_volume", 60)),
+                    key=f"timer-{timer['id']}",
+                    max_seconds=10,
                 )
                 await self.hub.broadcast("timer.finished", timer)
 
