@@ -54,7 +54,9 @@ class DashboardServices:
         self.display = DisplayController(
             self.database.setting("display_output", "HDMI-A-1")
         )
-        self.audio = AudioController()
+        self.audio = AudioController(
+            self.database.setting("audio_output", "default")
+        )
         self.tasks: list[asyncio.Task] = []
         self.pir: PIRMonitor | None = None
         self.scanner: BarcodeMonitor | None = None
@@ -115,6 +117,7 @@ class DashboardServices:
         self.pir = None
         self.scanner = None
         self.display.output = self.database.setting("display_output", "HDMI-A-1")
+        self.audio.output = self.database.setting("audio_output", "default")
         self._start_hardware()
 
     async def _periodic(self, kind: str, operation) -> None:

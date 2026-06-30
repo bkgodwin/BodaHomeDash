@@ -4,6 +4,7 @@ import math
 import os
 import platform
 import json
+import re
 import struct
 import subprocess
 import tempfile
@@ -43,9 +44,46 @@ class DisplayController:
 
 
 class AudioController:
-    def __init__(self):
+    def __init__(self, output: str = "default"):
+        self.output = output
         self._stops: dict[str, threading.Event] = {}
         self._lock = threading.Lock()
+
+    @staticmethod
+    def outputs() -> list[dict[str, str]]:
+        outputs = [{"id": "default", "name": "System default"}]
+        if platform.system() != "Linux":
+            return outputs
+        try:
+            result = subprocess.run(
+                ["aplay", "-l"],
+                capture_output=True,
+                text=True,
+                timeout=8,
+                check=False,
+            )
+            pattern = re.compile(
+                r"^card\s+(\d+):\s+([^\s]+)\s+\[([^\]]+)\],\s+"
+                r"device\s+(\d+):\s+([^\[]+)(?:\[([^\]]+)\])?",
+                re.I,
+            )
+            for line in result.stdout.splitlines():
+                match = pattern.search(line.strip())
+                if not match:
+                    continue
+                card, _, card_name, device, device_name, detail = match.groups()
+                output_id = f"plughw:{card},{device}"
+                if any(item["id"] == output_id for item in outputs):
+                    continue
+                label = " · ".join(
+                    part.strip()
+                    for part in (card_name, device_name, detail or "")
+                    if part and part.strip()
+                )
+                outputs.append({"id": output_id, "name": label})
+        except Exception:
+            pass
+        return outputs
 
     def play(self, kind: str = "timer", volume: int = 60) -> bool:
         return self.play_bursts(kind, volume, [1])
@@ -140,8 +178,12 @@ class AudioController:
                     str(path), winsound.SND_FILENAME | winsound.SND_NODEFAULT
                 )
             else:
+                command = ["aplay", "-q"]
+                if self.output and self.output != "default":
+                    command.extend(["-D", self.output])
+                command.append(str(path))
                 subprocess.run(
-                    ["aplay", "-q", str(path)],
+                    command,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     timeout=8,

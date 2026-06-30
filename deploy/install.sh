@@ -25,7 +25,7 @@ echo "[1/8] Installing Raspberry Pi packages..."
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y \
   python3 python3-venv python3-pip python3-dev build-essential \
-  chromium curl git rsync wlr-randr alsa-utils network-manager \
+  chromium curl git rsync swig wlr-randr alsa-utils network-manager \
   liblgpio-dev
 
 echo "[2/8] Installing Home Dashboard..."

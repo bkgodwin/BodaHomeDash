@@ -634,7 +634,7 @@ export function HomeScreen({
       )}
 
       {reminderEntry && (
-        <Modal title="Add Reminder" onClose={() => setReminderEntry(false)}>
+        <Modal title="Add Reminder" onClose={() => setReminderEntry(false)} wide>
           <input
             ref={reminderInputRef}
             class="entry-native-input"

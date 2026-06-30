@@ -262,6 +262,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "alert_emergency_audio": True,
     "alert_volume": 55,
     "timer_volume": 60,
+    "audio_output": "default",
     "scanner_device": "",
     "auto_purchase_match": True,
     "completed_reminders_last": True,

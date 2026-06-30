@@ -8,6 +8,7 @@ import platform
 import re
 import shutil
 import subprocess
+import threading
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, time, timedelta
@@ -37,7 +38,7 @@ from .backup import BackupManager
 from .config import config
 from .database import Database, utcnow
 from .events import hub
-from .hardware import BarcodeMonitor
+from .hardware import AudioController, BarcodeMonitor
 from .models import (
     BackupConfigure,
     BackupRestore,
@@ -294,6 +295,7 @@ async def update_settings(payload: SettingsUpdate):
             "motion_active_high",
             "scanner_device",
             "display_output",
+            "audio_output",
         }
         for key in payload.values
     ):
@@ -1450,6 +1452,8 @@ def hardware_devices():
         "audio_backend": "alsa" if system == "Linux" else (
             "winsound" if system == "Windows" else "browser"
         ),
+        "audio_outputs": AudioController.outputs(),
+        "audio_output": database.setting("audio_output", "default"),
     }
 
 
@@ -1651,6 +1655,39 @@ def restart_service():
             stderr=subprocess.DEVNULL,
         )
     return {"restarting": True}
+
+
+@app.post("/api/v1/system/exit-kiosk")
+def exit_kiosk():
+    if platform.system() != "Linux":
+        return {
+            "supported": False,
+            "message": "Exit to desktop is available on the Raspberry Pi kiosk.",
+        }
+    runtime_dir = Path(
+        os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    )
+    if not runtime_dir.is_dir():
+        raise HTTPException(status_code=500, detail="Desktop runtime directory is unavailable")
+    marker = runtime_dir / "home-dashboard-kiosk.exit"
+    marker.write_text("exit\n", encoding="utf-8")
+
+    def close_browser() -> None:
+        subprocess.run(
+            ["pkill", "-TERM", "-f", "chromium.*--kiosk"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+            check=False,
+        )
+
+    timer = threading.Timer(0.4, close_browser)
+    timer.daemon = True
+    timer.start()
+    return {
+        "supported": True,
+        "message": "Closing the kiosk. It will launch again after the next reboot.",
+    }
 
 
 @app.get("/api/v1/system/metrics")

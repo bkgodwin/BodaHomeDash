@@ -1,6 +1,7 @@
 import { useEffect, useState } from "preact/hooks";
 import { api, jsonBody } from "../api";
 import { TouchInput } from "../components/TouchInput";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import {
   BarcodeScanEvent,
   scannerTestMode
@@ -45,6 +46,7 @@ export function SettingsScreen({
   });
   const [metrics, setMetrics] = useState<any>(null);
   const [updateStatus, setUpdateStatus] = useState<any>(null);
+  const [exitDesktopConfirm, setExitDesktopConfirm] = useState(false);
 
   const load = async () => {
     const [values, calendarValues, deviceValues, syncValues, interfaceValues] = await Promise.all([
@@ -810,6 +812,29 @@ export function SettingsScreen({
                   ))}
                 </select>
               </label>}
+              <label class="setting-select">
+                <span>Audio output</span>
+                <select
+                  value={settings.audio_output || "default"}
+                  onChange={(event) =>
+                    setSettings({
+                      ...settings,
+                      audio_output: event.currentTarget.value
+                    })
+                  }
+                >
+                  {(devices.audio_outputs || [{ id: "default", name: "System default" }]).map(
+                    (output: any) => (
+                      <option value={output.id}>{output.name}</option>
+                    )
+                  )}
+                </select>
+              </label>
+              <p class="hint">
+                Raspberry Pi outputs are discovered through ALSA. Connect and
+                power the HDMI monitor before scanning if its output is missing,
+                then save before testing sound.
+              </p>
               <div class="button-row">
                 <button
                   class="button secondary"
@@ -866,7 +891,8 @@ export function SettingsScreen({
                     motion_gpio_bcm: settings.motion_gpio_bcm,
                     motion_timeout_seconds: settings.motion_timeout_seconds,
                     display_sleep_mode: settings.display_sleep_mode,
-                    scanner_device: settings.scanner_device
+                    scanner_device: settings.scanner_device,
+                    audio_output: settings.audio_output || "default"
                   })
                 }
               >
@@ -1185,6 +1211,19 @@ export function SettingsScreen({
                 Restart dashboard service
               </button>
               </div>
+              <hr class="settings-divider" />
+              <h3>Raspberry Pi desktop</h3>
+              <p>
+                Close the kiosk for this session to use Raspberry Pi OS. The
+                dashboard kiosk launches automatically again on the next boot.
+              </p>
+              <button
+                class="button danger"
+                disabled={metrics?.platform !== "Linux"}
+                onClick={() => setExitDesktopConfirm(true)}
+              >
+                Exit kiosk to desktop
+              </button>
             </SettingsCard>
           </>
         )}
@@ -1207,6 +1246,26 @@ export function SettingsScreen({
           </SettingsCard>
         )}
       </div>
+      {exitDesktopConfirm && (
+        <ConfirmDialog
+          title="Exit to Raspberry Pi desktop?"
+          message="This closes the dashboard kiosk for the current session. It will open automatically after the next reboot."
+          confirmLabel="Exit to desktop"
+          cancelLabel="Stay in dashboard"
+          onCancel={() => setExitDesktopConfirm(false)}
+          onConfirm={async () => {
+            setExitDesktopConfirm(false);
+            try {
+              const result = await api<any>("/system/exit-kiosk", {
+                method: "POST"
+              });
+              onToast(result.message);
+            } catch (error: any) {
+              onToast(error.message);
+            }
+          }}
+        />
+      )}
     </main>
   );
 }

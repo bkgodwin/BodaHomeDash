@@ -147,7 +147,7 @@ export function RemindersScreen({ refreshToken, onToast }: Props) {
         ))}
       </div>
       {adding && (
-        <Modal title="Add Reminder" onClose={() => setAdding(false)}>
+        <Modal title="Add Reminder" onClose={() => setAdding(false)} wide>
           <input
             ref={inputRef}
             class="entry-native-input"

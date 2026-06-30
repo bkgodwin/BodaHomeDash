@@ -14,6 +14,8 @@ panel from the Pi's USB ports.
 - Connect Pi HDMI0 to the monitor with a micro-HDMI-to-HDMI cable.
 - Connect the monitor's USB touch-data lead to a Pi USB port.
 - HDMI audio is used for the monitor's speakers.
+- Available ALSA playback interfaces can be selected and tested in Hardware
+  settings.
 - The expected Wayland output is `HDMI-A-1`, but it is configurable.
 
 The default sleep mode runs `wlr-randr --output HDMI-A-1 --off`. Some monitors

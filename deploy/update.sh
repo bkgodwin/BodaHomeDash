@@ -34,6 +34,15 @@ git reset --hard origin/main
 install -m 0755 "$APP_DIR/deploy/update.sh" /usr/local/lib/home-dashboard/update.sh
 install -m 0644 "$APP_DIR/deploy/home-dashboard-update.service" \
   /etc/systemd/system/home-dashboard-update.service
+KIOSK_USER="$(systemctl show home-dashboard.service --property=User --value)"
+if [[ -n "$KIOSK_USER" && "$KIOSK_USER" != "root" ]]; then
+  KIOSK_HOME="$(getent passwd "$KIOSK_USER" | cut -d: -f6)"
+  if [[ -n "$KIOSK_HOME" && -d "$KIOSK_HOME/.local/bin" ]]; then
+    install -o "$KIOSK_USER" -g "$KIOSK_USER" -m 0755 \
+      "$APP_DIR/deploy/launch-kiosk.sh" \
+      "$KIOSK_HOME/.local/bin/home-dashboard-kiosk"
+  fi
+fi
 systemctl daemon-reload
 
 write_status "running" "Updating application dependencies…"

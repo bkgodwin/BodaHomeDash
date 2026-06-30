@@ -35,8 +35,8 @@ sudo reboot
 
 The installer:
 
-- installs Python, Chromium, Wayland display tools, ALSA, NetworkManager, and
-  GPIO build dependencies;
+- installs Python, Chromium, Wayland display tools, ALSA, NetworkManager,
+  SWIG, and GPIO build dependencies;
 - copies the application to `/opt/home-dashboard`;
 - creates a virtual environment and installs the backend;
 - creates persistent storage at `/var/lib/home-dashboard`;
@@ -64,6 +64,11 @@ The kiosk opens a guided wizard:
 8. Finish setup.
 
 Encrypted USB backups remain optional and can be enabled later.
+
+The Hardware settings page can select an ALSA audio output for the monitor
+speakers. The System settings page can close Chromium and return to the
+Raspberry Pi desktop for the current session. The kiosk starts normally again
+after the next reboot.
 
 ## 5. Network access
 
