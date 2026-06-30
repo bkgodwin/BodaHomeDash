@@ -117,8 +117,25 @@ def is_local(request: Request) -> bool:
     return host in {"127.0.0.1", "::1", "localhost", "testclient"}
 
 
+def refresh_kiosk_launcher() -> None:
+    """Keep the user-session launcher current after a one-click app update."""
+    if platform.system() != "Linux":
+        return
+    source = Path("/opt/home-dashboard/deploy/launch-kiosk.sh")
+    if not source.is_file():
+        return
+    target = Path.home() / ".local/bin/home-dashboard-kiosk"
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        target.chmod(0o755)
+    except OSError:
+        logger.exception("Could not refresh the kiosk launcher")
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    refresh_kiosk_launcher()
     await services.start()
     yield
     await services.stop()
