@@ -19,6 +19,7 @@ export function RecipesScreen({
   onViewingChange
 }: Props) {
   const [query, setQuery] = useState("");
+  const [searchMode, setSearchMode] = useState<"name" | "ingredient">("name");
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [selected, setSelected] = useState<Recipe | null>(null);
   const [editing, setEditing] = useState<Recipe | null | undefined>(undefined);
@@ -28,11 +29,11 @@ export function RecipesScreen({
   const [loading, setLoading] = useState(false);
   const [offline, setOffline] = useState(false);
 
-  const load = async (search = query) => {
+  const load = async (search = query, mode = searchMode) => {
     setLoading(true);
     try {
       const result = await api<{ recipes: Recipe[]; offline: boolean }>(
-        `/recipes/search?query=${encodeURIComponent(search)}`
+        `/recipes/search?query=${encodeURIComponent(search)}&mode=${mode}`
       );
       setRecipes(result.recipes);
       setOffline(result.offline);
@@ -44,9 +45,12 @@ export function RecipesScreen({
   };
 
   useEffect(() => {
-    const timer = window.setTimeout(() => load(query), query ? 400 : 0);
+    const timer = window.setTimeout(
+      () => load(query, searchMode),
+      query ? 400 : 0
+    );
     return () => window.clearTimeout(timer);
-  }, [query, refreshToken]);
+  }, [query, searchMode, refreshToken]);
 
   useEffect(() => {
     if (!selected) {
@@ -222,7 +226,7 @@ export function RecipesScreen({
   }
 
   return (
-    <main class="page-screen glass recipes-screen">
+    <main class={`page-screen glass recipes-screen ${localDevice ? "kiosk-recipes" : ""}`}>
       <header class="page-header">
         <div>
           <h1>Recipes</h1>
@@ -231,14 +235,37 @@ export function RecipesScreen({
         <button class="button primary" onClick={() => setEditing(null)}>+ Custom recipe</button>
       </header>
       <div class="recipe-search-bar">
+        <div class="recipe-search-mode" role="group" aria-label="Recipe search type">
+          <button
+            class={searchMode === "name" ? "active" : ""}
+            onClick={() => setSearchMode("name")}
+          >
+            Recipe name
+          </button>
+          <button
+            class={searchMode === "ingredient" ? "active" : ""}
+            onClick={() => setSearchMode("ingredient")}
+          >
+            Ingredients
+          </button>
+        </div>
         <input
           type="search"
           value={query}
-          placeholder="Search recipes by name"
+          placeholder={
+            searchMode === "name"
+              ? "Search recipes by name"
+              : "Chicken, garlic, rice"
+          }
           onInput={(event) => setQuery(event.currentTarget.value)}
         />
         {query && <button onClick={() => setQuery("")}>Clear</button>}
       </div>
+      {searchMode === "ingredient" && (
+        <p class="recipe-search-hint">
+          Separate multiple ingredients with commas. Results must contain every ingredient.
+        </p>
+      )}
       {offline && <p class="recipe-offline">TheMealDB is offline. Showing cached favorites and custom recipes.</p>}
       <div class="recipe-grid">
         {loading && <p class="empty large">Finding recipes…</p>}
@@ -256,6 +283,17 @@ export function RecipesScreen({
                 <small>{[recipe.category, recipe.area].filter(Boolean).join(" · ") || "Custom"}</small>
                 <strong>{recipe.title}</strong>
                 <span>{recipe.ingredients.length} ingredients</span>
+                <ul class="recipe-card-ingredients">
+                  {recipe.ingredients.slice(0, 8).map((ingredient) => (
+                    <li>
+                      {ingredient.measure && <b>{ingredient.measure}</b>}
+                      {ingredient.name}
+                    </li>
+                  ))}
+                  {recipe.ingredients.length > 8 && (
+                    <li class="more">+{recipe.ingredients.length - 8} more</li>
+                  )}
+                </ul>
               </div>
               <button
                 class={`favorite-button ${recipe.favorite ? "active" : ""}`}

@@ -295,7 +295,21 @@ export function WeatherScreen({
           : Number(current.pressure_msl) / 33.8639,
         2
       )} inHg`,
-      secondary: `UV ${formatValue(air.uv_index ?? current.uv_index, 1)}`,
+      secondary: "Mean sea-level pressure"
+    },
+    {
+      label: "UV index",
+      value: formatValue(air.uv_index ?? current.uv_index, 1),
+      secondary:
+        Number(air.uv_index ?? current.uv_index) >= 11
+          ? "Extreme"
+          : Number(air.uv_index ?? current.uv_index) >= 8
+            ? "Very high"
+            : Number(air.uv_index ?? current.uv_index) >= 6
+              ? "High"
+              : Number(air.uv_index ?? current.uv_index) >= 3
+                ? "Moderate"
+                : "Low",
       concern: Number(air.uv_index ?? current.uv_index) >= 8
     },
     {

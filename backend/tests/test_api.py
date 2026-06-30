@@ -1,5 +1,6 @@
 from datetime import date, timedelta
 
+from home_dashboard import main as dashboard_main
 from home_dashboard.main import _sanitize_nhc_html
 from home_dashboard.providers.recipes import normalize_meal
 
@@ -42,7 +43,7 @@ def test_mealdb_recipe_normalization():
     assert recipe["steps"] == ["Rinse rice.", "Cook until tender."]
 
 
-def test_custom_recipe_crud_and_favorite(client):
+def test_custom_recipe_crud_and_favorite(client, monkeypatch):
     created = client.post(
         "/api/v1/recipes/custom",
         json={
@@ -71,13 +72,29 @@ def test_custom_recipe_crud_and_favorite(client):
             "title": "Test Seafood Gumbo",
             "category": "Dinner",
             "area": "Louisiana",
-            "ingredients": [{"name": "Shrimp", "measure": "1 lb"}],
+            "ingredients": [
+                {"name": "Shrimp", "measure": "1 lb"},
+                {"name": "Garlic", "measure": "2 cloves"},
+            ],
             "steps": ["Cook until done."],
             "image_data": "",
         },
     )
     assert updated.json()["favorite"] is True
     assert updated.json()["ingredients"][0]["name"] == "Shrimp"
+
+    async def no_online_results(_: list[str]):
+        return []
+
+    monkeypatch.setattr(
+        dashboard_main, "_mealdb_ingredient_recipes", no_online_results
+    )
+    ingredient_search = client.get(
+        "/api/v1/recipes/search",
+        params={"query": "shrimp, garlic", "mode": "ingredient"},
+    )
+    assert ingredient_search.status_code == 200
+    assert ingredient_search.json()["recipes"][0]["title"] == "Test Seafood Gumbo"
     deleted = client.delete(f"/api/v1/recipes/custom/{recipe['recipe_id']}")
     assert deleted.status_code == 204
 

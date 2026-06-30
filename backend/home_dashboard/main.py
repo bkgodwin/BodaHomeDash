@@ -1098,22 +1098,101 @@ async def _mealdb_request(endpoint: str, **params: str) -> list[dict[str, Any]]:
     return list(response.json().get("meals") or [])
 
 
-@app.get("/api/v1/recipes/search")
-async def search_recipes(query: str = Query(default="", max_length=100)):
-    cleaned = " ".join(query.split())
-    like = f"%{cleaned}%"
-    local_rows = database.all(
-        """SELECT * FROM recipes
-           WHERE (custom=1 OR favorite=1) AND (?='' OR title LIKE ?)
-           ORDER BY favorite DESC,custom DESC,title COLLATE NOCASE""",
-        (cleaned, like),
+async def _mealdb_ingredient_recipes(ingredients: list[str]) -> list[dict[str, Any]]:
+    filtered = await asyncio.gather(
+        *[
+            _mealdb_request("filter.php", i=ingredient.replace(" ", "_"))
+            for ingredient in ingredients
+        ]
     )
-    recipes = [_recipe_from_row(row) for row in local_rows]
+    if not filtered:
+        return []
+    matching_ids = {
+        str(meal.get("idMeal"))
+        for meal in filtered[0]
+        if meal.get("idMeal")
+    }
+    for meals in filtered[1:]:
+        matching_ids &= {
+            str(meal.get("idMeal")) for meal in meals if meal.get("idMeal")
+        }
+    ordered_ids = [
+        str(meal.get("idMeal"))
+        for meal in filtered[0]
+        if str(meal.get("idMeal")) in matching_ids
+    ][:30]
+    semaphore = asyncio.Semaphore(6)
+
+    async def detail(meal_id: str) -> dict[str, Any] | None:
+        cached = database.one(
+            "SELECT * FROM recipes WHERE recipe_id=?", (f"mealdb:{meal_id}",)
+        )
+        if cached:
+            return _recipe_from_row(cached)
+        async with semaphore:
+            meals = await _mealdb_request("lookup.php", i=meal_id)
+        return _cache_recipe(normalize_meal(meals[0])) if meals else None
+
+    return [
+        recipe
+        for recipe in await asyncio.gather(*[detail(meal_id) for meal_id in ordered_ids])
+        if recipe is not None
+    ]
+
+
+@app.get("/api/v1/recipes/search")
+async def search_recipes(
+    query: str = Query(default="", max_length=100),
+    mode: str = Query(default="name"),
+):
+    if mode not in {"name", "ingredient"}:
+        raise HTTPException(status_code=400, detail="Unknown recipe search mode")
+    cleaned = " ".join(query.split())
+    local_rows = database.all(
+        """SELECT * FROM recipes WHERE custom=1 OR favorite=1
+           ORDER BY favorite DESC,custom DESC,title COLLATE NOCASE"""
+    )
+    local_recipes = [_recipe_from_row(row) for row in local_rows]
+    ingredient_terms = [
+        " ".join(value.split()).casefold()
+        for value in cleaned.split(",")
+        if value.strip()
+    ]
+    if len(ingredient_terms) > 6:
+        raise HTTPException(status_code=400, detail="Search for up to six ingredients")
+    if mode == "ingredient" and cleaned and not ingredient_terms:
+        raise HTTPException(status_code=400, detail="Enter at least one ingredient")
+    if not cleaned:
+        recipes = local_recipes
+    elif mode == "ingredient":
+        recipes = [
+            recipe
+            for recipe in local_recipes
+            if all(
+                any(
+                    term in str(ingredient.get("name", "")).casefold()
+                    for ingredient in recipe["ingredients"]
+                )
+                for term in ingredient_terms
+            )
+        ]
+    else:
+        recipes = [
+            recipe
+            for recipe in local_recipes
+            if cleaned.casefold() in recipe["title"].casefold()
+        ]
     offline = False
     if cleaned:
         try:
-            for meal in await _mealdb_request("search.php", s=cleaned):
-                normalized = _cache_recipe(normalize_meal(meal))
+            if mode == "ingredient":
+                online_recipes = await _mealdb_ingredient_recipes(ingredient_terms)
+            else:
+                online_recipes = [
+                    _cache_recipe(normalize_meal(meal))
+                    for meal in await _mealdb_request("search.php", s=cleaned)
+                ]
+            for normalized in online_recipes:
                 if not any(item["recipe_id"] == normalized["recipe_id"] for item in recipes):
                     recipes.append(normalized)
         except (httpx.HTTPError, ValueError):
