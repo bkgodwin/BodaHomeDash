@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useEffect, useMemo, useState } from "preact/hooks";
 import { api } from "../api";
 import { Modal } from "../components/Modal";
 import { ProductEntry } from "../components/ProductEntry";
 import { Product } from "../types";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { TouchInput } from "../components/TouchInput";
+import { nutritionFacts } from "../nutrition";
 
 interface Props {
   refreshToken: number;
@@ -15,11 +17,13 @@ export function PantryScreen({ refreshToken, onToast }: Props) {
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Product | null>(null);
   const [adding, setAdding] = useState(false);
-  const holdTimer = useRef<number>();
   const [pendingRemoval, setPendingRemoval] = useState<{
     product: Product;
     addToShopping: boolean;
   } | null>(null);
+  const [selectedLots, setSelectedLots] = useState<number[]>([]);
+  const [editingLot, setEditingLot] = useState<number | null>(null);
+  const [lotNotes, setLotNotes] = useState("");
 
   const load = () =>
     api<Product[]>("/pantry")
@@ -45,18 +49,39 @@ export function PantryScreen({ refreshToken, onToast }: Props) {
       ?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
-  const removeLot = async (
+  const removeLots = async (
     product: Product,
     addToShopping: boolean = false
   ) => {
-    const lot = product.lots[0];
-    if (!lot) return;
-    await api(
-      `/pantry/lots/${lot.id}?add_to_shopping=${addToShopping}`,
-      { method: "DELETE" }
-    );
+    if (!selectedLots.length) return;
+    await api("/pantry/lots/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        lot_ids: selectedLots,
+        add_to_shopping: addToShopping
+      })
+    });
     setSelected(null);
+    setSelectedLots([]);
     load();
+  };
+
+  const consumeOne = async (product: Product) => {
+    const result = await api<{ quantity: number }>(
+      `/pantry/${product.id}/consume`,
+      { method: "POST" }
+    );
+    setProducts((items) =>
+      result.quantity
+        ? items.map((item) =>
+            item.id === product.id
+              ? { ...item, total_quantity: result.quantity }
+              : item
+          )
+        : items.filter((item) => item.id !== product.id)
+    );
+    onToast(`Used one ${product.name}`);
   };
 
   const expirationClass = (value: string | null) => {
@@ -106,21 +131,14 @@ export function PantryScreen({ refreshToken, onToast }: Props) {
                   {firstLetter}
                 </h2>
               )}
-              <button
+              <div
                 class={`pantry-row ${expirationClass(product.nearest_expiration)}`}
-                onPointerDown={() => {
-                  holdTimer.current = window.setTimeout(
-                    () =>
-                      setPendingRemoval({
-                        product,
-                        addToShopping: false
-                      }),
-                    700
-                  );
+                role="button"
+                tabIndex={0}
+                onClick={() => {
+                  setSelectedLots([]);
+                  setSelected(product);
                 }}
-                onPointerUp={() => window.clearTimeout(holdTimer.current)}
-                onPointerMove={() => window.clearTimeout(holdTimer.current)}
-                onClick={() => setSelected(product)}
               >
                 <span class="product-avatar">
                   {product.image_url ? (
@@ -143,7 +161,17 @@ export function PantryScreen({ refreshToken, onToast }: Props) {
                     ? `Nearest: ${new Date(`${product.nearest_expiration}T12:00`).toLocaleDateString()}`
                     : "No expiration"}
                 </span>
-              </button>
+                <button
+                  class="pantry-minus"
+                  aria-label={`Use one ${product.name}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    consumeOne(product).catch((error) => onToast(error.message));
+                  }}
+                >
+                  −
+                </button>
+              </div>
             </>
           );
         })}
@@ -185,12 +213,40 @@ export function PantryScreen({ refreshToken, onToast }: Props) {
               <h3>Inventory batches</h3>
               {selected.lots.map((lot) => (
                 <div class={`lot-row ${expirationClass(lot.expires_on)}`}>
-                  <span>Quantity {lot.quantity}</span>
-                  <span>
-                    {lot.expires_on
-                      ? `Expires ${new Date(`${lot.expires_on}T12:00`).toLocaleDateString()}`
-                      : "No expiration date"}
-                  </span>
+                  <label class="lot-selector">
+                    <input
+                      type="checkbox"
+                      checked={selectedLots.includes(lot.id)}
+                      onChange={() =>
+                        setSelectedLots((ids) =>
+                          ids.includes(lot.id)
+                            ? ids.filter((id) => id !== lot.id)
+                            : [...ids, lot.id]
+                        )
+                      }
+                    />
+                    <span>
+                      <strong>Quantity {lot.quantity}</strong>
+                      <small>
+                        {lot.expires_on
+                          ? `Expires ${new Date(`${lot.expires_on}T12:00`).toLocaleDateString()}`
+                          : "No expiration date"}
+                      </small>
+                      <small>
+                        Added {new Date(lot.added_at).toLocaleDateString()}
+                      </small>
+                      {lot.notes && <em>{lot.notes}</em>}
+                    </span>
+                  </label>
+                  <button
+                    class="button secondary lot-note-button"
+                    onClick={() => {
+                      setEditingLot(lot.id);
+                      setLotNotes(lot.notes || "");
+                    }}
+                  >
+                    {lot.notes ? "Edit notes" : "Add notes"}
+                  </button>
                 </div>
               ))}
             </section>
@@ -199,30 +255,38 @@ export function PantryScreen({ refreshToken, onToast }: Props) {
                 <section>
                   <h3>Nutrition facts</h3>
                   <div class="nutrition-grid">
-                    {Object.entries(selected.nutrition)
-                      .filter(
-                        ([key]) =>
-                          [
-                            "energy-kcal_100g",
-                            "fat_100g",
-                            "carbohydrates_100g",
-                            "sugars_100g",
-                            "proteins_100g",
-                            "salt_100g"
-                          ].includes(key)
-                      )
-                      .map(([key, value]) => (
+                    {nutritionFacts(selected.nutrition).map((fact) => (
                         <span>
-                          <small>{key.replace("_100g", "").replace("-", " ")}</small>
-                          <strong>{String(value)}</strong>
+                          <small>{fact.label}</small>
+                          <strong>{fact.value}</strong>
+                          <em>{fact.basis}</em>
                         </span>
-                      ))}
+                    ))}
                   </div>
                 </section>
               )}
+            {selected.ingredients && (
+              <section class="product-copy">
+                <h3>Ingredients</h3>
+                <p>{selected.ingredients}</p>
+              </section>
+            )}
+            {selected.allergens && (
+              <section class="product-copy">
+                <h3>Allergens</h3>
+                <p>{selected.allergens}</p>
+              </section>
+            )}
+            {selected.notes && (
+              <section class="product-copy">
+                <h3>Product notes</h3>
+                <p>{selected.notes}</p>
+              </section>
+            )}
             <div class="modal-actions">
               <button
                 class="button secondary"
+                disabled={!selectedLots.length}
                 onClick={() =>
                   setPendingRemoval({
                     product: selected,
@@ -234,6 +298,7 @@ export function PantryScreen({ refreshToken, onToast }: Props) {
               </button>
               <button
                 class="button danger"
+                disabled={!selectedLots.length}
                 onClick={() =>
                   setPendingRemoval({
                     product: selected,
@@ -252,7 +317,7 @@ export function PantryScreen({ refreshToken, onToast }: Props) {
           title="Remove pantry batch?"
           message={`${
             pendingRemoval.addToShopping ? "Remove and add" : "Remove"
-          } one batch of ${pendingRemoval.product.name}?`}
+          } ${selectedLots.length} selected batch${selectedLots.length === 1 ? "" : "es"} of ${pendingRemoval.product.name}?`}
           confirmLabel={
             pendingRemoval.addToShopping
               ? "Confirm and add"
@@ -261,13 +326,38 @@ export function PantryScreen({ refreshToken, onToast }: Props) {
           cancelLabel="No, keep it"
           onCancel={() => setPendingRemoval(null)}
           onConfirm={async () => {
-            await removeLot(
+            await removeLots(
               pendingRemoval.product,
               pendingRemoval.addToShopping
             );
             setPendingRemoval(null);
           }}
         />
+      )}
+      {editingLot !== null && (
+        <Modal title="Batch notes" onClose={() => setEditingLot(null)}>
+          <TouchInput
+            label="Notes"
+            value={lotNotes}
+            multiline
+            onChange={setLotNotes}
+          />
+          <button
+            class="button primary full-width"
+            onClick={async () => {
+              const product = await api<Product>(`/pantry/lots/${editingLot}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ notes: lotNotes })
+              });
+              setSelected(product);
+              setEditingLot(null);
+              load();
+            }}
+          >
+            Save notes
+          </button>
+        </Modal>
       )}
     </main>
   );

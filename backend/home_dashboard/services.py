@@ -55,6 +55,7 @@ class DashboardServices:
         self.scanner: BarcodeMonitor | None = None
         self.last_activity = datetime.now(UTC)
         self.display_asleep = False
+        self.display_awake_lock = False
         self._sync_locks = {
             "weather": asyncio.Lock(),
             "alerts": asyncio.Lock(),
@@ -177,6 +178,13 @@ class DashboardServices:
                 self.database.setting("temperature_unit", "fahrenheit"),
                 self.database.setting("wind_unit", "mph"),
             )
+            try:
+                data["air_quality"] = await self.weather.air_quality(
+                    float(latitude), float(longitude)
+                )
+            except Exception as error:
+                logger.warning("Air-quality synchronization failed: %s", error)
+                data["air_quality"] = None
             now = datetime.now(UTC)
             self.database.execute(
                 """INSERT INTO weather_cache(cache_key, data_json, fetched_at, expires_at)
@@ -232,6 +240,15 @@ class DashboardServices:
                 {"scope": "current", "fetched_at": utcnow()},
             )
             return data
+
+    async def set_display_awake_lock(self, enabled: bool) -> bool:
+        self.display_awake_lock = enabled
+        if enabled:
+            self.wake()
+        await self.hub.broadcast(
+            "display.lock", {"enabled": self.display_awake_lock}
+        )
+        return self.display_awake_lock
 
     async def sync_alerts(self) -> list[dict[str, Any]]:
         async with self._sync_locks["alerts"]:
@@ -538,6 +555,8 @@ class DashboardServices:
         while True:
             await asyncio.sleep(5)
             if not self.database.setting("motion_enabled", True):
+                continue
+            if self.display_awake_lock:
                 continue
             timeout = int(self.database.setting("motion_timeout_seconds", 300))
             if (

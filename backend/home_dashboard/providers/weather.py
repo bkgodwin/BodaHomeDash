@@ -80,6 +80,12 @@ class WeatherProvider:
                         "cloud_cover",
                         "wind_speed_10m",
                         "wind_direction_10m",
+                        "wind_gusts_10m",
+                        "dew_point_2m",
+                        "pressure_msl",
+                        "visibility",
+                        "is_day",
+                        "uv_index",
                     ]
                 ),
                 "hourly": ",".join(
@@ -88,6 +94,19 @@ class WeatherProvider:
                         "precipitation_probability",
                         "weather_code",
                         "wind_speed_10m",
+                        "wind_direction_10m",
+                        "wind_gusts_10m",
+                        "relative_humidity_2m",
+                        "dew_point_2m",
+                        "apparent_temperature",
+                        "precipitation",
+                        "rain",
+                        "showers",
+                        "snowfall",
+                        "pressure_msl",
+                        "visibility",
+                        "cloud_cover",
+                        "uv_index",
                     ]
                 ),
                 "daily": ",".join(
@@ -114,12 +133,59 @@ class WeatherProvider:
                     "temperature_2m", "°F"
                 ),
                 "wind": data.get("current_units", {}).get("wind_speed_10m", "mph"),
+                "precipitation": data.get("current_units", {}).get(
+                    "precipitation", "in"
+                ),
+                "pressure": data.get("current_units", {}).get(
+                    "pressure_msl", "hPa"
+                ),
+                "visibility": data.get("current_units", {}).get(
+                    "visibility", "ft"
+                ),
             },
             "current": data.get("current", {}),
             "hourly": data.get("hourly", {}),
             "daily": data.get("daily", {}),
             "fetched_at": datetime.now(UTC).isoformat(),
             "attribution": "Weather data by Open-Meteo.com",
+        }
+
+    async def air_quality(
+        self, latitude: float, longitude: float
+    ) -> dict[str, Any]:
+        response = await self.client.get(
+            "https://air-quality-api.open-meteo.com/v1/air-quality",
+            params={
+                "latitude": latitude,
+                "longitude": longitude,
+                "timezone": "auto",
+                "current": ",".join(
+                    [
+                        "us_aqi",
+                        "us_aqi_pm2_5",
+                        "us_aqi_pm10",
+                        "us_aqi_ozone",
+                        "us_aqi_nitrogen_dioxide",
+                        "us_aqi_sulphur_dioxide",
+                        "us_aqi_carbon_monoxide",
+                        "pm2_5",
+                        "pm10",
+                        "ozone",
+                        "nitrogen_dioxide",
+                        "sulphur_dioxide",
+                        "carbon_monoxide",
+                        "uv_index",
+                    ]
+                ),
+            },
+            timeout=15,
+        )
+        response.raise_for_status()
+        data = response.json()
+        return {
+            "current": data.get("current", {}),
+            "units": data.get("current_units", {}),
+            "attribution": "Air quality by CAMS and Open-Meteo.com",
         }
 
     async def current(
@@ -150,6 +216,12 @@ class WeatherProvider:
                         "cloud_cover",
                         "wind_speed_10m",
                         "wind_direction_10m",
+                        "wind_gusts_10m",
+                        "dew_point_2m",
+                        "pressure_msl",
+                        "visibility",
+                        "is_day",
+                        "uv_index",
                     ]
                 ),
             },
@@ -165,6 +237,15 @@ class WeatherProvider:
                 ),
                 "wind": data.get("current_units", {}).get(
                     "wind_speed_10m", "mph"
+                ),
+                "precipitation": data.get("current_units", {}).get(
+                    "precipitation", "in"
+                ),
+                "pressure": data.get("current_units", {}).get(
+                    "pressure_msl", "hPa"
+                ),
+                "visibility": data.get("current_units", {}).get(
+                    "visibility", "ft"
                 ),
             },
             "fetched_at": datetime.now(UTC).isoformat(),

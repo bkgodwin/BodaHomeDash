@@ -10,17 +10,21 @@ The current implementation includes:
 - Louisiana/US holidays and pantry expiration markers;
 - current, hourly, and daily weather from Open-Meteo, with day/night and
   condition-aware forecast styling;
+- detailed conditions, CAMS air quality, and touch-controlled NOAA/NWS radar;
 - NWS alerts, with emergency-only display wake and one gentle audio chime;
 - barcode lookup through a local cache and Open Food Facts;
 - pantry inventory with separate expiration batches;
 - shared shopping lists and reminders;
 - persistent kitchen timers with HDMI audio;
+- live timer countdown/progress displays and a temporary keep-awake lock;
 - PIR-controlled HDMI sleep or instant black-screen blanking;
 - PIN-protected phone layouts on the local network;
 - optional encrypted USB backups restorable during a fresh setup;
-- an optional garbage-pickup-day reminder beside the clock; and
+- an optional garbage-pickup-day reminder beside the clock;
 - a touch-first setup wizard, optional full on-screen keyboard, physical
-  keyboard support, and touch-native confirmation dialogs.
+  keyboard support, and touch-native confirmation dialogs; and
+- per-batch pantry notes and selection, FIFO quantity controls, and normalized
+  nutrition/ingredient details.
 
 The Windows development build supports keyboard-wedge barcode scanners and
 audio through the Windows sound system. Raspberry Pi deployments use evdev for

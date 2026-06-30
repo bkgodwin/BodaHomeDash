@@ -9,6 +9,8 @@ export interface Status {
   garbage_pickup_weekday: number;
   reduced_motion: boolean;
   onscreen_keyboard_enabled: boolean;
+  weather_effects: "off" | "subtle" | "full";
+  display_awake_lock: boolean;
   time: string;
 }
 
@@ -50,6 +52,7 @@ export interface InventoryLot {
   quantity: number;
   expires_on: string | null;
   added_at: string;
+  notes: string;
 }
 
 export interface Product {
@@ -89,6 +92,7 @@ export interface Timer {
   id: number;
   label: string;
   ends_at: string;
+  created_at: string;
   status: "running" | "finished" | "dismissed";
 }
 
@@ -96,7 +100,21 @@ export interface Weather {
   current: Record<string, number | string>;
   hourly: Record<string, Array<number | string>>;
   daily: Record<string, Array<number | string>>;
-  units: { temperature: string; wind: string };
+  units: {
+    temperature: string;
+    wind: string;
+    precipitation?: string;
+    pressure?: string;
+    visibility?: string;
+  };
+  air_quality?: {
+    current: Record<string, number | string>;
+    units: Record<string, string>;
+    attribution: string;
+  } | null;
+  latitude?: number;
+  longitude?: number;
+  timezone?: string;
   attribution: string;
 }
 

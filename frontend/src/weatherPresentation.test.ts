@@ -31,7 +31,7 @@ describe("weather presentation", () => {
     expect(weatherKind(95)).toBe("storm");
     expect(weatherKind(71)).toBe("snow");
     expect(weatherKind(61)).toBe("rain");
-    expect(weatherGradient(95)).toContain("43,43,62");
+    expect(weatherGradient(95)).toContain("38,27,64");
   });
 
   it("centers an hourly window around the current hour", () => {

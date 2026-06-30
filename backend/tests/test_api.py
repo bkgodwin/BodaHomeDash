@@ -80,3 +80,54 @@ def test_sync_diagnostics_endpoint(client):
     response = client.get("/api/v1/sync/status")
     assert response.status_code == 200
     assert {"providers", "log"} <= response.json().keys()
+
+
+def test_fifo_consume_batch_notes_and_selected_batch_delete(client):
+    first = client.post(
+        "/api/v1/pantry",
+        json={
+            "name": "FIFO Test Beans",
+            "quantity": 2,
+            "expires_on": "2027-01-01",
+        },
+    ).json()
+    product_id = first["id"]
+    first_lot = first["lots"][0]["id"]
+    second = client.post(
+        "/api/v1/pantry",
+        json={
+            "name": "FIFO Test Beans",
+            "product_id": product_id,
+            "quantity": 3,
+            "expires_on": "2027-02-01",
+        },
+    ).json()
+    second_lot = [lot for lot in second["lots"] if lot["id"] != first_lot][0]["id"]
+
+    updated = client.patch(
+        f"/api/v1/pantry/lots/{second_lot}",
+        json={"notes": "Use for chili"},
+    ).json()
+    assert next(lot for lot in updated["lots"] if lot["id"] == second_lot)["notes"] == "Use for chili"
+
+    consumed = client.post(f"/api/v1/pantry/{product_id}/consume").json()
+    assert consumed["quantity"] == 4
+    detail = client.get(f"/api/v1/products/{product_id}").json()
+    assert next(lot for lot in detail["lots"] if lot["id"] == first_lot)["quantity"] == 1
+
+    deleted = client.post(
+        "/api/v1/pantry/lots/delete",
+        json={"lot_ids": [second_lot], "add_to_shopping": False},
+    )
+    assert deleted.status_code == 204
+    remaining = client.get(f"/api/v1/products/{product_id}").json()["lots"]
+    assert [lot["id"] for lot in remaining] == [first_lot]
+
+
+def test_display_awake_lock(client):
+    enabled = client.put("/api/v1/display/awake-lock?enabled=true")
+    assert enabled.status_code == 200
+    assert enabled.json()["enabled"] is True
+    assert client.get("/api/v1/status").json()["display_awake_lock"] is True
+    disabled = client.put("/api/v1/display/awake-lock?enabled=false")
+    assert disabled.json()["enabled"] is False

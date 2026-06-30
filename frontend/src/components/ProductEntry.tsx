@@ -1,8 +1,12 @@
 import { useRef, useState } from "preact/hooks";
 import { api, jsonBody } from "../api";
 import { Modal } from "./Modal";
-import { NumberPad, TouchKeyboard } from "./TouchKeyboard";
+import { TouchKeyboard } from "./TouchKeyboard";
 import { onScreenKeyboardEnabled } from "../inputPreferences";
+import {
+  ExpirationDatePad,
+  expirationDateValue
+} from "./ExpirationDatePad";
 
 export interface ProductSeed {
   product_id?: number;
@@ -39,29 +43,6 @@ export function ProductEntry({ seed = {}, destination, onClose, onSaved }: Props
   const setActiveValue = (value: string) =>
     setFields((current) => ({ ...current, [active]: value }));
 
-  const formattedDate = () => {
-    const digits = dateDigits.slice(0, 8);
-    return [digits.slice(0, 2), digits.slice(2, 4), digits.slice(4, 8)]
-      .filter(Boolean)
-      .join("/");
-  };
-
-  const expirationValue = (): string | null => {
-    if (dateDigits.length !== 8) return null;
-    const month = Number(dateDigits.slice(0, 2));
-    const day = Number(dateDigits.slice(2, 4));
-    const year = Number(dateDigits.slice(4, 8));
-    const value = new Date(year, month - 1, day);
-    if (
-      value.getFullYear() !== year ||
-      value.getMonth() !== month - 1 ||
-      value.getDate() !== day
-    ) {
-      return null;
-    }
-    return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-  };
-
   const save = async (expiration: string | null = null) => {
     if (!fields.name.trim()) return;
     setSaving(true);
@@ -97,15 +78,13 @@ export function ProductEntry({ seed = {}, destination, onClose, onSaved }: Props
   if (step === "expiration") {
     return (
       <Modal title="Expiration Date" onClose={() => setStep("details")}>
-        <p class="hint">Enter MM/DD/YYYY, or skip if no date is available.</p>
-        <NumberPad
+        <ExpirationDatePad
           value={dateDigits}
-          display={formattedDate()}
-          onChange={(value) => setDateDigits(value.slice(0, 8))}
+          onChange={(value) => setDateDigits(value.slice(0, 6))}
           onConfirm={() => {
-            const value = expirationValue();
+            const value = expirationDateValue(dateDigits);
             if (!value) {
-              setDateError("Enter a valid date in MM/DD/YYYY format.");
+              setDateError("Enter a valid month and day.");
               return;
             }
             setDateError("");

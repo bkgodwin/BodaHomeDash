@@ -34,12 +34,20 @@ type Screen =
 
 export function App() {
   const [status, setStatus] = useState<Status | null>(null);
-  const [screen, setScreen] = useState<Screen>("home");
+  const [screen, setScreen] = useState<Screen>(() => {
+    const requested = new URLSearchParams(window.location.search).get("screen");
+    return ["home", "pantry", "shopping", "reminders", "weather", "settings"].includes(
+      requested || ""
+    )
+      ? (requested as Screen)
+      : "home";
+  });
   const [refreshToken, setRefreshToken] = useState(0);
   const [weatherRefreshToken, setWeatherRefreshToken] = useState(0);
   const [homeKey, setHomeKey] = useState(0);
   const [weather, setWeather] = useState<Weather | null>(null);
   const [alerts, setAlerts] = useState<WeatherAlert[]>([]);
+  const [previewAlert, setPreviewAlert] = useState<WeatherAlert | null>(null);
   const [timerAlert, setTimerAlert] = useState<Timer | null>(null);
   const [showAlertDialog, setShowAlertDialog] = useState(false);
   const [toast, setToast] = useState("");
@@ -120,6 +128,15 @@ export function App() {
         if (payload?.emergency) setShowAlertDialog(true);
       }
       if (event === "timer.finished") setTimerAlert(payload as Timer);
+      if (event === "weather.alert.test") {
+        setPreviewAlert(payload as WeatherAlert);
+        setShowAlertDialog(true);
+      }
+      if (event === "display.lock") {
+        setStatus((current) =>
+          current ? { ...current, display_awake_lock: Boolean(payload.enabled) } : current
+        );
+      }
       if (event === "display.sleep") setBlanked(payload?.mode === "blank");
       if (event === "display.wake") {
         setBlanked(false);
@@ -234,6 +251,8 @@ export function App() {
       <WeatherCanvas
         code={Number(weather?.current?.weather_code || 0)}
         reduced={status.reduced_motion}
+        effect={status.weather_effects}
+        windSpeed={Number(weather?.current?.wind_speed_10m || 0)}
       />
       <nav class="main-nav glass">
         <button
@@ -288,6 +307,15 @@ export function App() {
             garbagePickupEnabled={status.garbage_pickup_enabled}
             garbagePickupWeekday={status.garbage_pickup_weekday}
             reducedMotion={status.reduced_motion}
+            awakeLock={status.display_awake_lock}
+            onToggleAwakeLock={async () => {
+              const result = await api<{ enabled: boolean }>(
+                `/display/awake-lock?enabled=${!status.display_awake_lock}`,
+                { method: "PUT" }
+              );
+              setStatus({ ...status, display_awake_lock: result.enabled });
+              showToast(result.enabled ? "Display locked awake" : "Automatic sleep restored");
+            }}
             onScanNow={() => {
               scannerQuickMode.value = true;
               setScanPromptOpen(true);
@@ -314,27 +342,38 @@ export function App() {
         )}
       </div>
 
-      {showAlertDialog && (emergency || regularAlert) && (
+      {showAlertDialog && (previewAlert || emergency || regularAlert) && (
         <Modal
-          title={emergency ? "Emergency Weather Alert" : "Weather Alert"}
-          danger
+          title={
+            previewAlert
+              ? "Weather Alert Preview"
+              : emergency
+                ? "Emergency Weather Alert"
+                : "Weather Alert"
+          }
+          danger={Boolean(previewAlert?.severity === "Extreme" || emergency)}
         >
           <article class="active-alert">
-            <h2>{(emergency || regularAlert).event}</h2>
-            <h3>{(emergency || regularAlert).headline}</h3>
-            <p>{(emergency || regularAlert).description}</p>
-            {(emergency || regularAlert).instruction && (
+            <h2>{(previewAlert || emergency || regularAlert).event}</h2>
+            <h3>{(previewAlert || emergency || regularAlert).headline}</h3>
+            <p>{(previewAlert || emergency || regularAlert).description}</p>
+            {(previewAlert || emergency || regularAlert).instruction && (
               <p class="alert-instruction">
-                {(emergency || regularAlert).instruction}
+                {(previewAlert || emergency || regularAlert).instruction}
               </p>
             )}
             <small>
               Expires{" "}
-              {new Date((emergency || regularAlert).expires_at).toLocaleString()}
+              {new Date((previewAlert || emergency || regularAlert).expires_at).toLocaleString()}
             </small>
             <button
               class="button primary full-width"
               onClick={async () => {
+                if (previewAlert) {
+                  setPreviewAlert(null);
+                  setShowAlertDialog(false);
+                  return;
+                }
                 await api(
                   `/weather/alerts/${encodeURIComponent((emergency || regularAlert).alert_id)}/dismiss`,
                   { method: "POST" }

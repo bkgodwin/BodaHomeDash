@@ -94,8 +94,20 @@ export function timeOfDayTheme(
   const lower = stops[Math.max(0, upperIndex - 1)];
   const span = Math.max(1, upper.at - lower.at);
   const amount = (current - lower.at) / span;
-  return [
+  let result: [string, string] = [
     blend(lower.top, upper.top, amount),
     blend(lower.bottom, upper.bottom, amount)
   ];
+  const code = Number(weather?.current?.weather_code || 0);
+  const cloud = Number(weather?.current?.cloud_cover || 0);
+  const storm = [95, 96, 99].includes(code);
+  const rain = [51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82].includes(code);
+  const snow = [71, 73, 75, 77, 85, 86].includes(code);
+  const fog = [45, 48].includes(code);
+  if (storm) result = [blend(result[0], "#25243d", 0.48), blend(result[1], "#38354d", 0.48)];
+  else if (rain) result = [blend(result[0], "#315b78", 0.35), blend(result[1], "#496a7d", 0.35)];
+  else if (snow) result = [blend(result[0], "#8abbd3", 0.28), blend(result[1], "#b3d4e2", 0.28)];
+  else if (fog) result = [blend(result[0], "#87959e", 0.35), blend(result[1], "#a6afb4", 0.35)];
+  else if (cloud >= 70) result = [blend(result[0], "#536d82", 0.22), blend(result[1], "#718798", 0.22)];
+  return result;
 }

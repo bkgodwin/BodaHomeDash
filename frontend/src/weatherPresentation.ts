@@ -1,4 +1,5 @@
 import { Weather } from "./types";
+import { blend } from "./theme";
 
 export function roundTemperature(value: number | string | undefined): string {
   const number = Number(value);
@@ -42,30 +43,94 @@ export function weatherGradient(
     night?: boolean;
     temperature?: number | string;
     temperatureUnit?: string;
+    weather?: Weather | null;
+    timestamp?: string;
   } = {}
 ): string {
-  if (options.night) {
-    return "linear-gradient(155deg, rgba(15,34,66,.9), rgba(31,61,98,.62))";
+  let solarTop = options.night ? "#102645" : "#5e9fc5";
+  let solarBottom = options.night ? "#183455" : "#8ebbd0";
+  if (options.weather && options.timestamp) {
+    [solarTop, solarBottom] = solarPalette(
+      options.weather,
+      options.timestamp
+    );
   }
   const temperature = Number(options.temperature);
   const hotThreshold = options.temperatureUnit?.includes("C") ? 35 : 95;
+  let tint = "rgba(255,255,255,.04)";
   if (Number.isFinite(temperature) && temperature >= hotThreshold) {
-    return "linear-gradient(155deg, rgba(255,255,255,.07), rgba(173,63,56,.48))";
+    tint = "rgba(185,63,47,.48)";
+  } else {
+    switch (weatherKind(code)) {
+      case "storm":
+        tint = "rgba(38,27,64,.66)";
+        break;
+      case "snow":
+        tint = "rgba(105,178,218,.46)";
+        break;
+      case "rain":
+        tint = "rgba(35,92,132,.56)";
+        break;
+      case "fog":
+        tint = "rgba(150,158,164,.40)";
+        break;
+      case "cloud":
+        tint = "rgba(83,101,120,.34)";
+        break;
+      default:
+        tint = "rgba(245,190,86,.12)";
+    }
   }
-  switch (weatherKind(code)) {
-    case "storm":
-      return "linear-gradient(155deg, rgba(255,255,255,.05), rgba(43,43,62,.72))";
-    case "snow":
-      return "linear-gradient(155deg, rgba(255,255,255,.1), rgba(75,139,190,.55))";
-    case "rain":
-      return "linear-gradient(155deg, rgba(255,255,255,.06), rgba(66,78,91,.62))";
-    case "fog":
-      return "linear-gradient(155deg, rgba(255,255,255,.1), rgba(106,118,126,.46))";
-    case "cloud":
-      return "linear-gradient(155deg, rgba(255,255,255,.08), rgba(100,120,139,.35))";
-    default:
-      return "linear-gradient(155deg, rgba(255,255,255,.1), rgba(244,181,79,.22))";
+  return `linear-gradient(155deg, ${tint}, rgba(0,0,0,.08)), linear-gradient(155deg, ${solarTop}, ${solarBottom})`;
+}
+
+export function solarPalette(
+  weather: Weather,
+  timestamp: string
+): [string, string] {
+  const date = timestamp.slice(0, 10);
+  const index = (weather.daily.time || []).map(String).indexOf(date);
+  if (index < 0) {
+    return isNightAt(weather, timestamp)
+      ? ["#102645", "#183455"]
+      : ["#5e9fc5", "#8ebbd0"];
   }
+  const value = new Date(timestamp).getTime();
+  const sunrise = new Date(String(weather.daily.sunrise[index])).getTime();
+  const sunset = new Date(String(weather.daily.sunset[index])).getTime();
+  const transition = 90 * 60 * 1000;
+  const night: [string, string] = ["#102645", "#183455"];
+  const dawn: [string, string] = ["#e58a45", "#e6bd65"];
+  const day: [string, string] = ["#5e9fc5", "#8ebbd0"];
+  const mix = (
+    left: [string, string],
+    right: [string, string],
+    amount: number
+  ): [string, string] => [
+    blend(left[0], right[0], amount),
+    blend(left[1], right[1], amount)
+  ];
+  if (value < sunrise - transition) return night;
+  if (value < sunrise) {
+    return mix(night, dawn, (value - (sunrise - transition)) / transition);
+  }
+  if (value < sunrise + transition) {
+    return mix(dawn, day, (value - sunrise) / transition);
+  }
+  if (value < sunset - transition) return day;
+  if (value < sunset) {
+    return mix(day, dawn, (value - (sunset - transition)) / transition);
+  }
+  if (value < sunset + transition) {
+    return mix(dawn, night, (value - sunset) / transition);
+  }
+  return night;
+}
+
+export function compassDirection(degrees: number): string {
+  if (!Number.isFinite(degrees)) return "—";
+  const points = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+  return points[Math.round(degrees / 45) % 8];
 }
 
 export function centeredHourlyIndices(

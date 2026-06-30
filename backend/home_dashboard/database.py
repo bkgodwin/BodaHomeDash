@@ -109,6 +109,7 @@ CREATE TABLE IF NOT EXISTS inventory_lots (
     product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
     quantity INTEGER NOT NULL DEFAULT 1 CHECK(quantity > 0),
     expires_on TEXT,
+    notes TEXT NOT NULL DEFAULT '',
     added_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -291,6 +292,17 @@ class Database:
                     connection.execute(
                         f"ALTER TABLE calendars ADD COLUMN {name} {definition}"
                     )
+            lot_columns = {
+                row[1]
+                for row in connection.execute(
+                    "PRAGMA table_info(inventory_lots)"
+                ).fetchall()
+            }
+            if "notes" not in lot_columns:
+                connection.execute(
+                    "ALTER TABLE inventory_lots "
+                    "ADD COLUMN notes TEXT NOT NULL DEFAULT ''"
+                )
             now = utcnow()
             connection.executemany(
                 "INSERT OR IGNORE INTO settings(key, value_json, updated_at) VALUES(?,?,?)",

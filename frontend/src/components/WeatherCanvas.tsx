@@ -3,6 +3,8 @@ import { useEffect, useRef } from "preact/hooks";
 interface Props {
   code?: number;
   reduced?: boolean;
+  effect?: "off" | "subtle" | "full";
+  windSpeed?: number;
 }
 
 interface Particle {
@@ -13,12 +15,17 @@ interface Particle {
   drift: number;
 }
 
-export function WeatherCanvas({ code = 0, reduced = false }: Props) {
+export function WeatherCanvas({
+  code = 0,
+  reduced = false,
+  effect = "full",
+  windSpeed = 0
+}: Props) {
   const ref = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
     const canvas = ref.current;
-    if (!canvas || reduced) return;
+    if (!canvas || reduced || effect === "off") return;
     const context = canvas.getContext("2d");
     if (!context) return;
     let last = 0;
@@ -29,13 +36,16 @@ export function WeatherCanvas({ code = 0, reduced = false }: Props) {
     );
     const stormy = [95, 96, 99].includes(code);
     const foggy = [45, 48].includes(code);
-    const count = snowy ? 70 : rainy || stormy ? 100 : foggy ? 24 : 12;
+    const scale = effect === "subtle" ? 0.4 : 1;
+    const count = Math.round(
+      (snowy ? 70 : rainy || stormy ? 100 : foggy ? 24 : 12) * scale
+    );
     const particles: Particle[] = Array.from({ length: count }, () => ({
       x: Math.random(),
       y: Math.random(),
       speed: 0.002 + Math.random() * 0.006,
       size: 1 + Math.random() * 3,
-      drift: -0.001 + Math.random() * 0.002
+      drift: -0.001 + Math.random() * 0.002 + Math.min(windSpeed, 50) / 30000
     }));
 
     const resize = () => {
@@ -98,7 +108,7 @@ export function WeatherCanvas({ code = 0, reduced = false }: Props) {
       cancelAnimationFrame(animation);
       window.removeEventListener("resize", resize);
     };
-  }, [code, reduced]);
+  }, [code, reduced, effect, windSpeed]);
 
   return <canvas ref={ref} class="weather-canvas" aria-hidden="true" />;
 }

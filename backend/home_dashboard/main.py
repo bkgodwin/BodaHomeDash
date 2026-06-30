@@ -42,6 +42,7 @@ from .models import (
     HardwareTest,
     LoginRequest,
     LotUpdate,
+    LotDeleteMany,
     PantryAdd,
     PinSetup,
     ReminderCreate,
@@ -117,6 +118,7 @@ async def access_control(request: Request, call_next):
         "/api/v1/calendar/accounts",
         "/api/v1/network",
         "/api/v1/hardware",
+        "/api/v1/display",
         "/api/v1/backups",
         "/api/v1/system",
         "/api/v1/sync",
@@ -155,6 +157,8 @@ def status(request: Request) -> dict[str, Any]:
             "garbage_pickup_weekday", 1
         ),
         "reduced_motion": database.setting("reduced_motion", False),
+        "weather_effects": database.setting("weather_effects", "full"),
+        "display_awake_lock": services.display_awake_lock,
         "onscreen_keyboard_enabled": database.setting(
             "onscreen_keyboard_enabled", True
         ),
@@ -500,12 +504,13 @@ async def add_pantry(payload: PantryAdd):
             )
         lot = connection.execute(
             """INSERT INTO inventory_lots(
-                product_id,quantity,expires_on,added_at,updated_at
-            ) VALUES(?,?,?,?,?)""",
+                product_id,quantity,expires_on,notes,added_at,updated_at
+            ) VALUES(?,?,?,?,?,?)""",
             (
                 product_id,
                 payload.quantity,
                 payload.expires_on.isoformat() if payload.expires_on else None,
+                payload.lot_notes,
                 now,
                 now,
             ),
@@ -544,9 +549,11 @@ async def update_lot(lot_id: int, payload: LotUpdate):
         if payload.expires_on is not None
         else current["expires_on"]
     )
+    notes = payload.notes if payload.notes is not None else current["notes"]
     database.execute(
-        "UPDATE inventory_lots SET quantity=?,expires_on=?,updated_at=? WHERE id=?",
-        (quantity, expiration, utcnow(), lot_id),
+        """UPDATE inventory_lots
+           SET quantity=?,expires_on=?,notes=?,updated_at=? WHERE id=?""",
+        (quantity, expiration, notes, utcnow(), lot_id),
     )
     await hub.broadcast("pantry.updated", {"product_id": current["product_id"]})
     return product_detail(current["product_id"])
@@ -581,6 +588,83 @@ async def delete_lot(lot_id: int, add_to_shopping: bool = False):
     await hub.broadcast("pantry.updated", {"product_id": lot["product_id"]})
     await hub.broadcast("shopping.updated", {})
     return Response(status_code=204)
+
+
+@app.post("/api/v1/pantry/lots/delete")
+async def delete_lots(payload: LotDeleteMany):
+    placeholders = ",".join("?" for _ in payload.lot_ids)
+    lots = database.all(
+        f"""SELECT il.*,p.name,p.normalized_name FROM inventory_lots il
+            JOIN products p ON p.id=il.product_id
+            WHERE il.id IN ({placeholders})""",
+        tuple(payload.lot_ids),
+    )
+    if len(lots) != len(set(payload.lot_ids)):
+        raise HTTPException(status_code=404, detail="One or more batches were not found")
+    now = utcnow()
+    with database.transaction() as connection:
+        connection.execute(
+            f"DELETE FROM inventory_lots WHERE id IN ({placeholders})",
+            tuple(payload.lot_ids),
+        )
+        if payload.add_to_shopping:
+            grouped: dict[int, dict[str, Any]] = {}
+            for lot in lots:
+                item = grouped.setdefault(
+                    lot["product_id"],
+                    {
+                        "name": lot["name"],
+                        "normalized_name": lot["normalized_name"],
+                        "quantity": 0,
+                    },
+                )
+                item["quantity"] += lot["quantity"]
+            connection.executemany(
+                """INSERT INTO shopping_items(
+                       name,normalized_name,product_id,quantity,created_at,updated_at
+                   ) VALUES(?,?,?,?,?,?)""",
+                [
+                    (
+                        item["name"],
+                        item["normalized_name"],
+                        product_id,
+                        item["quantity"],
+                        now,
+                        now,
+                    )
+                    for product_id, item in grouped.items()
+                ],
+            )
+    await hub.broadcast("pantry.updated", {})
+    if payload.add_to_shopping:
+        await hub.broadcast("shopping.updated", {})
+    return Response(status_code=204)
+
+
+@app.post("/api/v1/pantry/{product_id}/consume")
+async def consume_pantry(product_id: int):
+    with database.transaction() as connection:
+        lot = connection.execute(
+            """SELECT * FROM inventory_lots WHERE product_id=?
+               ORDER BY added_at ASC, id ASC LIMIT 1""",
+            (product_id,),
+        ).fetchone()
+        if not lot:
+            raise HTTPException(status_code=404, detail="Product is not in stock")
+        if lot["quantity"] <= 1:
+            connection.execute("DELETE FROM inventory_lots WHERE id=?", (lot["id"],))
+        else:
+            connection.execute(
+                """UPDATE inventory_lots SET quantity=quantity-1,updated_at=?
+                   WHERE id=?""",
+                (utcnow(), lot["id"]),
+            )
+    await hub.broadcast("pantry.updated", {"product_id": product_id})
+    remaining = database.one(
+        "SELECT COALESCE(SUM(quantity),0) AS quantity FROM inventory_lots WHERE product_id=?",
+        (product_id,),
+    )
+    return {"product_id": product_id, "quantity": remaining["quantity"]}
 
 
 @app.get("/api/v1/shopping")
@@ -855,6 +939,16 @@ def activity():
     return {"awake": True}
 
 
+@app.get("/api/v1/display/awake-lock")
+def display_awake_lock():
+    return {"enabled": services.display_awake_lock}
+
+
+@app.put("/api/v1/display/awake-lock")
+async def set_display_awake_lock(enabled: bool):
+    return {"enabled": await services.set_display_awake_lock(enabled)}
+
+
 @app.get("/api/v1/hardware/devices")
 def hardware_devices():
     system = platform.system()
@@ -880,6 +974,43 @@ async def hardware_test(payload: HardwareTest):
         return {"success": services.display.off()}
     if payload.kind == "display_on":
         return {"success": services.display.on()}
+    previews = {
+        "weather_advisory": {
+            "event": "Heat Advisory",
+            "headline": "Heat index values may reach 108°F this afternoon.",
+            "description": "Hot temperatures and high humidity may cause heat illness.",
+            "instruction": "Drink water, limit strenuous outdoor activity, and check on vulnerable neighbors.",
+            "severity": "Moderate",
+        },
+        "weather_warning": {
+            "event": "Severe Thunderstorm Warning",
+            "headline": "Damaging winds and frequent lightning are possible nearby.",
+            "description": "A strong thunderstorm is moving through the area.",
+            "instruction": "Move indoors and stay away from windows.",
+            "severity": "Severe",
+        },
+        "weather_emergency": {
+            "event": "Tornado Emergency",
+            "headline": "A dangerous tornado is approaching the area.",
+            "description": "This is a demonstration of the emergency alert display.",
+            "instruction": "Go to a small interior room on the lowest floor.",
+            "severity": "Extreme",
+        },
+    }
+    if payload.kind in previews:
+        await hub.broadcast(
+            "weather.alert.test",
+            {
+                **previews[payload.kind],
+                "alert_id": f"test-{payload.kind}",
+                "expires_at": (
+                    datetime.now(UTC) + timedelta(minutes=15)
+                ).isoformat(),
+                "dismissed": 0,
+                "test": True,
+            },
+        )
+        return {"success": True}
     raise HTTPException(status_code=400, detail="Unknown hardware test")
 
 

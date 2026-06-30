@@ -7,7 +7,6 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { SwipeActionRow } from "../components/SwipeActionRow";
 import {
   centeredHourlyIndices,
-  isNightAt,
   roundTemperature,
   weatherGradient
 } from "../weatherPresentation";
@@ -31,6 +30,8 @@ interface Props {
   garbagePickupEnabled: boolean;
   garbagePickupWeekday: number;
   reducedMotion: boolean;
+  awakeLock: boolean;
+  onToggleAwakeLock: () => void;
   onScanNow: () => void;
 }
 
@@ -63,6 +64,19 @@ function weatherSymbol(code = 0): string {
   return "🌧";
 }
 
+export function formatTimerCountdown(milliseconds: number): string {
+  const seconds = Math.max(0, Math.ceil(milliseconds / 1000));
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+export function timerProgress(timer: Timer, now: Date): number {
+  const start = new Date(timer.created_at).getTime();
+  const end = new Date(timer.ends_at).getTime();
+  if (!Number.isFinite(start) || end <= start) return 0;
+  return Math.max(0, Math.min(100, ((now.getTime() - start) / (end - start)) * 100));
+}
+
 function monthBounds(month: Date) {
   const first = new Date(month.getFullYear(), month.getMonth(), 1);
   const gridStart = new Date(first);
@@ -82,6 +96,8 @@ export function HomeScreen({
   garbagePickupEnabled,
   garbagePickupWeekday,
   reducedMotion,
+  awakeLock,
+  onToggleAwakeLock,
   onScanNow
 }: Props) {
   const [month, setMonth] = useState(
@@ -332,6 +348,8 @@ export function HomeScreen({
             background: weatherGradient(
               Number(current.weather_code || 0),
               {
+                weather,
+                timestamp: String(current.time || new Date().toISOString()),
                 temperature: current.temperature_2m,
                 temperatureUnit: weather?.units.temperature
               }
@@ -352,6 +370,7 @@ export function HomeScreen({
                 {weather?.units.temperature}
               </small>
             </span>
+            <span class="weather-details-link">Detailed Conditions ›</span>
           </button>
           <div class="forecast-mode-toggle">
             <button
@@ -388,7 +407,8 @@ export function HomeScreen({
                     }`}
                     style={{
                       background: weatherGradient(code, {
-                        night: isNightAt(weather, item),
+                        weather,
+                        timestamp: item,
                         temperature:
                           weather?.hourly.temperature_2m?.[index],
                         temperatureUnit: weather?.units.temperature
@@ -419,6 +439,8 @@ export function HomeScreen({
                     class="forecast-hour daily"
                     style={{
                       background: weatherGradient(code, {
+                        weather,
+                        timestamp: `${item}T12:00`,
                         temperature:
                           weather?.daily.temperature_2m_max?.[index],
                         temperatureUnit: weather?.units.temperature
@@ -526,21 +548,37 @@ export function HomeScreen({
         >
           ▥
         </button>
+        <button
+          class={`awake-lock-button ${awakeLock ? "active" : ""}`}
+          onClick={onToggleAwakeLock}
+          aria-label={awakeLock ? "Allow display to sleep" : "Keep display awake"}
+          title={awakeLock ? "Display locked awake" : "Keep display awake"}
+        >
+          <span class={`lock-glyph ${awakeLock ? "locked" : ""}`} aria-hidden="true" />
+        </button>
         <div class="running-timers">
           {timers.map((timer) => (
             <button
               class={timer.status === "finished" ? "timer-finished" : ""}
               onClick={() => setTimerToCancel(timer)}
             >
-              {timer.label}{" "}
-              {timer.status === "finished"
-                ? "Done"
-                : Math.max(
-                    0,
-                    Math.ceil(
-                      (new Date(timer.ends_at).getTime() - Date.now()) / 60000
-                    )
-                  ) + "m"}
+              <span>
+                <b>{timer.label}</b>
+                <strong>
+                  {timer.status === "finished"
+                    ? "Done"
+                    : formatTimerCountdown(
+                        new Date(timer.ends_at).getTime() - now.getTime()
+                      )}
+                </strong>
+              </span>
+              <i>
+                <i
+                  style={{
+                    width: `${timerProgress(timer, now)}%`
+                  }}
+                />
+              </i>
             </button>
           ))}
         </div>

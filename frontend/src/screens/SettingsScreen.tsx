@@ -270,6 +270,22 @@ export function SettingsScreen({
                   setSettings({ ...settings, reduced_motion: value })
                 }
               />
+              <label class="setting-select">
+                <span>Animated weather background</span>
+                <select
+                  value={settings.weather_effects || "full"}
+                  onChange={(event) =>
+                    setSettings({
+                      ...settings,
+                      weather_effects: event.currentTarget.value
+                    })
+                  }
+                >
+                  <option value="off">Off</option>
+                  <option value="subtle">Subtle</option>
+                  <option value="full">Full</option>
+                </select>
+              </label>
               <SettingToggle
                 label="Enable on-screen keyboard"
                 checked={settings.onscreen_keyboard_enabled}
@@ -325,6 +341,7 @@ export function SettingsScreen({
                     household_name: settings.household_name,
                     clock_24_hour: settings.clock_24_hour,
                     reduced_motion: settings.reduced_motion,
+                    weather_effects: settings.weather_effects,
                     onscreen_keyboard_enabled:
                       settings.onscreen_keyboard_enabled,
                     garbage_pickup_enabled:
@@ -712,8 +729,32 @@ export function SettingsScreen({
                     })
                   }
                 >
-                  Test emergency alert
+                  Test emergency sound
                 </button>
+              </div>
+              <h3>Weather alert previews</h3>
+              <p class="hint">
+                These previews are not saved and do not trigger the emergency
+                sound.
+              </p>
+              <div class="button-row">
+                {[
+                  ["weather_advisory", "Preview advisory"],
+                  ["weather_warning", "Preview warning"],
+                  ["weather_emergency", "Preview emergency"]
+                ].map(([kind, label]) => (
+                  <button
+                    class="button secondary"
+                    onClick={() =>
+                      api("/hardware/test", {
+                        method: "POST",
+                        ...jsonBody({ kind })
+                      })
+                    }
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
               <button
                 class="button primary"

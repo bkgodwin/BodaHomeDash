@@ -28,11 +28,18 @@ class PantryAdd(ProductInput):
     product_id: int | None = None
     quantity: int = Field(default=1, ge=1, le=999)
     expires_on: date | None = None
+    lot_notes: str = Field(default="", max_length=1000)
 
 
 class LotUpdate(BaseModel):
     quantity: int | None = Field(default=None, ge=1, le=999)
     expires_on: date | None = None
+    notes: str | None = Field(default=None, max_length=1000)
+
+
+class LotDeleteMany(BaseModel):
+    lot_ids: list[int] = Field(min_length=1, max_length=100)
+    add_to_shopping: bool = False
 
 
 class ShoppingCreate(BaseModel):
@@ -104,4 +111,12 @@ class WifiConnect(BaseModel):
 
 
 class HardwareTest(BaseModel):
-    kind: Literal["timer_audio", "alert_audio", "display_off", "display_on"]
+    kind: Literal[
+        "timer_audio",
+        "alert_audio",
+        "display_off",
+        "display_on",
+        "weather_advisory",
+        "weather_warning",
+        "weather_emergency",
+    ]

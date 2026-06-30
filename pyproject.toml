@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "home-dashboard"
-version = "0.2.0"
+version = "0.3.0"
 description = "Local-first household calendar, pantry, shopping, reminders, weather and kiosk dashboard"
 requires-python = ">=3.11"
 dependencies = [
