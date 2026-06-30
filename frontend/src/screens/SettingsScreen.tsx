@@ -303,6 +303,44 @@ export function SettingsScreen({
                   })
                 }
               />
+              <div class="background-preview-setting">
+                <div>
+                  <strong>Background mode</strong>
+                  <p>Auto follows the current time and weather. Choose a scene to preview it or leave it displayed.</p>
+                </div>
+                <div class="background-preview-grid" role="group" aria-label="Background mode">
+                  {[
+                    ["auto", "Auto"],
+                    ["morning", "Morning"],
+                    ["day", "Day"],
+                    ["sunset", "Sunset"],
+                    ["night", "Night + moon"],
+                    ["clear", "Clear"],
+                    ["cloudy", "Cloudy"],
+                    ["rain", "Rain"],
+                    ["storm", "Storm"],
+                    ["wind", "Wind"],
+                    ["snow", "Snow"],
+                    ["fog", "Fog"]
+                  ].map(([value, label]) => (
+                    <button
+                      type="button"
+                      class={settings.background_preview === value ? "active" : ""}
+                      disabled={busy}
+                      onClick={() =>
+                        save(
+                          { background_preview: value },
+                          value === "auto"
+                            ? "Automatic background restored"
+                            : `${label} background selected`
+                        )
+                      }
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <SettingToggle
                 label="Move completed reminders to the bottom"
                 checked={settings.completed_reminders_last}
@@ -359,6 +397,7 @@ export function SettingsScreen({
                     clock_24_hour: settings.clock_24_hour,
                     reduced_motion: settings.reduced_motion,
                     weather_effects: settings.weather_effects,
+                    background_preview: settings.background_preview || "auto",
                     onscreen_keyboard_enabled:
                       settings.onscreen_keyboard_enabled,
                     completed_reminders_last:

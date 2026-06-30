@@ -87,16 +87,20 @@ export function WeatherCanvas({
         context.globalAlpha = skyVisibility;
         context.shadowColor = "rgba(220,235,255,.8)";
         context.shadowBlur = 24;
-        context.fillStyle = "#f4edcf";
+        context.fillStyle = "rgba(12,25,48,.94)";
         context.beginPath();
         context.arc(moonX, moonY, moonRadius, 0, Math.PI * 2);
         context.fill();
+        context.clip();
         context.shadowBlur = 0;
-        context.fillStyle = "rgba(12,25,48,.92)";
-        const waxing = moonPhase < 0.5;
-        const phaseOffset = Math.cos(moonPhase * Math.PI * 2) * moonRadius;
+        context.fillStyle = "#f4edcf";
+        const waxing = moonPhase <= 0.5;
+        const phaseProgress = waxing ? moonPhase * 2 : (moonPhase - 0.5) * 2;
+        const phaseOffset = waxing
+          ? moonRadius * 2 * (1 - phaseProgress)
+          : -moonRadius * 2 * phaseProgress;
         context.beginPath();
-        context.arc(moonX + (waxing ? -1 : 1) * (moonRadius + phaseOffset), moonY, moonRadius, 0, Math.PI * 2);
+        context.arc(moonX + phaseOffset, moonY, moonRadius, 0, Math.PI * 2);
         context.fill();
         context.restore();
         context.save();

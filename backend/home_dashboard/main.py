@@ -189,6 +189,7 @@ def status(request: Request) -> dict[str, Any]:
         ),
         "reduced_motion": database.setting("reduced_motion", False),
         "weather_effects": database.setting("weather_effects", "full"),
+        "background_preview": database.setting("background_preview", "auto"),
         "display_awake_lock": services.display_awake_lock,
         "onscreen_keyboard_enabled": database.setting(
             "onscreen_keyboard_enabled", True

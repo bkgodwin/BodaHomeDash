@@ -38,6 +38,7 @@ export function ProductEntry({ seed = {}, destination, onClose, onSaved }: Props
   const [quantity, setQuantity] = useState(1);
   const [step, setStep] = useState<"details" | "expiration">("details");
   const [dateDigits, setDateDigits] = useState("");
+  const [nativeDate, setNativeDate] = useState("");
   const [dateError, setDateError] = useState("");
   const [saving, setSaving] = useState(false);
   const activeInputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
@@ -80,20 +81,49 @@ export function ProductEntry({ seed = {}, destination, onClose, onSaved }: Props
   if (step === "expiration") {
     return (
       <Modal title="Expiration Date" onClose={() => setStep("details")}>
-        <ExpirationDatePad
-          value={dateDigits}
-          onChange={(value) => setDateDigits(value.slice(0, 6))}
-          onConfirm={() => {
-            const value = expirationDateValue(dateDigits);
-            if (!value) {
-              setDateError("Enter a valid month and day.");
-              return;
-            }
-            setDateError("");
-            save(value);
-          }}
-          onSkip={() => save(null)}
-        />
+        {onScreenKeyboardEnabled.value ? (
+          <ExpirationDatePad
+            value={dateDigits}
+            onChange={(value) => setDateDigits(value.slice(0, 6))}
+            onConfirm={() => {
+              const value = expirationDateValue(dateDigits);
+              if (!value) {
+                setDateError("Enter a valid month and day.");
+                return;
+              }
+              setDateError("");
+              save(value);
+            }}
+            onSkip={() => save(null)}
+          />
+        ) : (
+          <div class="native-date-entry">
+            <label>
+              <span>Expiration date</span>
+              <input
+                type="date"
+                value={nativeDate}
+                onChange={(event) => setNativeDate(event.currentTarget.value)}
+              />
+            </label>
+            <div class="button-row">
+              <button
+                class="button primary"
+                disabled={!nativeDate || saving}
+                onClick={() => save(nativeDate)}
+              >
+                Continue
+              </button>
+              <button
+                class="button secondary"
+                disabled={saving}
+                onClick={() => save(null)}
+              >
+                Skip expiration
+              </button>
+            </div>
+          </div>
+        )}
         {dateError && <p class="field-error" role="alert">{dateError}</p>}
       </Modal>
     );

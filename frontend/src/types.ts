@@ -10,6 +10,7 @@ export interface Status {
   reduced_motion: boolean;
   onscreen_keyboard_enabled: boolean;
   weather_effects: "off" | "subtle" | "full";
+  background_preview: string;
   display_awake_lock: boolean;
   mobile_dash_address: string;
   time: string;

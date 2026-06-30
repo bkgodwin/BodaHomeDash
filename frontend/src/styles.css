@@ -955,8 +955,11 @@ select:focus-visible {
 }
 
 .modal-body {
+  min-height: 0;
   overflow-y: auto;
   padding: 20px 24px 24px;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .day-details,
@@ -1593,7 +1596,7 @@ select:focus-visible {
     left: 8px;
     right: 8px;
     top: auto;
-    bottom: 8px;
+    bottom: max(8px, env(safe-area-inset-bottom));
     width: auto;
     height: 68px;
     flex-direction: row;
@@ -1614,13 +1617,14 @@ select:focus-visible {
   }
 
   .screen-host {
-    inset: 0 0 78px;
+    inset: 0 0 calc(88px + env(safe-area-inset-bottom));
   }
 
   .home-screen {
     display: block;
     padding: 8px;
     overflow-y: auto;
+    padding-bottom: 18px;
   }
 
   .calendar-shell {
@@ -1699,17 +1703,32 @@ select:focus-visible {
   }
 
   .modal-backdrop {
-    padding: 8px;
+    padding:
+      max(8px, env(safe-area-inset-top))
+      8px
+      max(8px, env(safe-area-inset-bottom));
   }
 
   .modal,
   .modal-wide {
     width: calc(100vw - 16px);
-    max-height: calc(100vh - 16px);
+    max-height: calc(
+      100dvh - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom)
+    );
   }
 
   .modal-body {
     padding: 14px;
+  }
+
+  .page-screen,
+  .large-list,
+  .settings-content {
+    scroll-padding-bottom: 24px;
+  }
+
+  .app-credits {
+    display: none;
   }
 
   .daily-detail-list article {
@@ -2110,6 +2129,34 @@ select:focus-visible {
 .graph-mode-switch i{position:relative;width:42px;height:22px;border-radius:999px;background:#ffffff24;box-shadow:inset 0 1px 4px #0005}.graph-mode-switch i:after{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 2px 6px #0006;transition:transform .22s ease}.graph-mode-switch.feels-like i:after{transform:translateX(20px)}.graph-mode-switch span{opacity:.55}.graph-mode-switch:not(.feels-like) span:first-child,.graph-mode-switch.feels-like span:last-child{opacity:1}
 .temperature-graph line{stroke-width:.5}.temperature-line{stroke-width:1.5}.temperature-graph text{font-family:inherit}
 .hourly-weather-scroll .weather-detail-grid article.current-hour{position:relative;border:3px solid #fff;box-shadow:0 0 0 2px #6ec8ef99,0 0 22px #65bde67a;transform:translateY(-1px)}
+
+.background-preview-setting{display:grid;gap:10px;margin:14px 0;padding:14px;border:1px solid #ffffff20;border-radius:16px;background:#ffffff0b}
+.background-preview-setting p{margin:4px 0 0;color:var(--text-muted);font-size:.78rem}
+.background-preview-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(92px,1fr));gap:7px}
+.background-preview-grid button{min-height:42px;padding:6px 10px;border:1px solid #ffffff24;border-radius:12px;color:#eaf6ff;background:#ffffff0b;font-weight:650}
+.background-preview-grid button.active{border-color:#8bd6ffb8;background:linear-gradient(145deg,#78caf04a,#5d89d22e);box-shadow:inset 0 0 0 1px #ffffff1c,0 0 14px #4cb7ed2b}
+
+.mobile-scanner{display:grid;gap:12px}
+.camera-viewport{position:relative;min-height:240px;overflow:hidden;border:1px solid #ffffff2d;border-radius:18px;background:#020a12}
+.camera-viewport video{display:block;width:100%;height:min(48vh,390px);object-fit:cover}
+.camera-target{position:absolute;left:9%;right:9%;top:27%;bottom:27%;border:3px solid #a9ebff;border-radius:16px;box-shadow:0 0 0 999px #00101f45,0 0 22px #69d4ff78}
+.camera-target:before,.camera-target:after{content:"";position:absolute;left:8%;right:8%;height:2px;background:linear-gradient(90deg,transparent,#ff7373,transparent);box-shadow:0 0 8px #ff5d5d}
+.camera-target:before{top:48%}.camera-target:after{display:none}
+.camera-message{min-height:1.5em;margin:0;color:var(--text-muted);text-align:center}
+.camera-photo-button{position:relative;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.camera-photo-button input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+.native-date-entry,.native-timer-entry,.native-pin-login{display:grid;gap:12px}
+.native-date-entry label{display:grid;gap:7px;color:var(--text-muted)}
+.native-date-entry input,.native-timer-entry input,.native-pin-login input{width:100%;min-height:52px;padding:0 14px;border:1px solid #ffffff30;border-radius:14px;color:#fff;background:#071d33c9;font:inherit;font-size:1rem;outline:none}
+.native-date-entry input:focus,.native-timer-entry input:focus,.native-pin-login input:focus{border-color:#83d2fa;box-shadow:0 0 0 3px #63c3ef29}
+
+@media(max-width:800px),(orientation:portrait){
+  .camera-viewport{min-height:210px}
+  .camera-viewport video{height:min(42dvh,360px)}
+  .product-detail,.product-entry{padding-bottom:max(8px,env(safe-area-inset-bottom))}
+  .modal-header{flex:0 0 auto}
+  .modal-body{flex:1 1 auto}
+}
 .hourly-weather-scroll .weather-detail-grid article.current-hour:after{content:"NOW";position:absolute;top:6px;right:6px;padding:2px 5px;border-radius:999px;color:#09233a;background:#dff5ff;font-size:.5rem;font-weight:900;letter-spacing:.06em}
 
 .tropical-weather-page{display:grid;grid-template-rows:auto minmax(0,1fr);overflow:hidden}

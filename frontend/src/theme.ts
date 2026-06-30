@@ -111,3 +111,84 @@ export function timeOfDayTheme(
   else if (cloud >= 70) result = [blend(result[0], "#536d82", 0.22), blend(result[1], "#718798", 0.22)];
   return result;
 }
+
+export interface BackgroundAtmosphere {
+  now: Date;
+  weather: Weather | null;
+  code: number;
+  isDay: boolean;
+  cloudCover: number;
+  windSpeed: number;
+}
+
+const PREVIEW_WEATHER: Record<string, { code: number; cloudCover: number }> = {
+  clear: { code: 0, cloudCover: 0 },
+  cloudy: { code: 3, cloudCover: 90 },
+  rain: { code: 63, cloudCover: 95 },
+  storm: { code: 95, cloudCover: 100 },
+  snow: { code: 73, cloudCover: 90 },
+  fog: { code: 45, cloudCover: 85 }
+};
+
+export function backgroundAtmosphere(
+  mode: string,
+  now: Date,
+  weather: Weather | null
+): BackgroundAtmosphere {
+  if (!mode || mode === "auto") {
+    return {
+      now,
+      weather,
+      code: Number(weather?.current?.weather_code || 0),
+      isDay: Boolean(Number(weather?.current?.is_day ?? 1)),
+      cloudCover: Number(weather?.current?.cloud_cover || 0),
+      windSpeed: Number(weather?.current?.wind_speed_10m || 0)
+    };
+  }
+
+  const previewTime: Record<string, number> = {
+    morning: 7,
+    day: 13,
+    sunset: 19,
+    night: 23
+  };
+  const timePreview = mode in previewTime;
+  const preview = PREVIEW_WEATHER[mode] || PREVIEW_WEATHER.clear;
+  const displayTime = new Date(now);
+  if (timePreview) displayTime.setHours(previewTime[mode], 0, 0, 0);
+  const previewIsDay = timePreview
+    ? mode !== "night"
+    : Boolean(Number(weather?.current?.is_day ?? 1));
+  const current = {
+    ...(weather?.current || {}),
+    weather_code: preview.code,
+    cloud_cover: preview.cloudCover,
+    is_day: previewIsDay ? 1 : 0,
+    wind_speed_10m: mode === "wind" ? 35 : Number(weather?.current?.wind_speed_10m || 0)
+  };
+  const previewSunrise = new Date(displayTime);
+  previewSunrise.setHours(7, 0, 0, 0);
+  const previewSunset = new Date(displayTime);
+  previewSunset.setHours(19, 0, 0, 0);
+  const daily = timePreview
+    ? {
+        ...(weather?.daily || {}),
+        sunrise: [previewSunrise.toISOString()],
+        sunset: [previewSunset.toISOString()]
+      }
+    : weather?.daily || {};
+  return {
+    now: displayTime,
+    weather: weather ? { ...weather, current, daily } : ({
+      current,
+      hourly: {},
+      daily,
+      units: { temperature: "°F", wind: "mph" },
+      attribution: "Preview"
+    } as Weather),
+    code: preview.code,
+    isDay: previewIsDay,
+    cloudCover: preview.cloudCover,
+    windSpeed: Number(current.wind_speed_10m)
+  };
+}

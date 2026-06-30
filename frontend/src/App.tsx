@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { api, jsonBody, openEventSocket } from "./api";
 import { Modal } from "./components/Modal";
+import { MobileBarcodeScanner } from "./components/MobileBarcodeScanner";
 import { NumberPad } from "./components/TouchKeyboard";
 import { ProductEntry, ProductSeed } from "./components/ProductEntry";
 import { WeatherCanvas } from "./components/WeatherCanvas";
@@ -10,7 +11,7 @@ import { RemindersScreen } from "./screens/RemindersScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { ShoppingScreen } from "./screens/ShoppingScreen";
 import { WeatherScreen } from "./screens/WeatherScreen";
-import { timeOfDayTheme } from "./theme";
+import { backgroundAtmosphere, timeOfDayTheme } from "./theme";
 import { onScreenKeyboardEnabled } from "./inputPreferences";
 import {
   installScannerCapture,
@@ -63,6 +64,7 @@ export function App() {
   >(null);
   const toastTimer = useRef<number | null>(null);
   const [scanPromptOpen, setScanPromptOpen] = useState(false);
+  const [cameraScanOpen, setCameraScanOpen] = useState(false);
 
   const showToast = (message: string) => {
     setToast(message);
@@ -76,7 +78,8 @@ export function App() {
   const loadStatus = () =>
     api<Status>("/status")
       .then((value) => {
-        onScreenKeyboardEnabled.value = value.onscreen_keyboard_enabled;
+        onScreenKeyboardEnabled.value =
+          value.local && value.onscreen_keyboard_enabled;
         setStatus(value);
       })
       .catch((error) => showToast(error.message));
@@ -221,14 +224,29 @@ export function App() {
     }
   };
 
+  const atmosphere = useMemo(
+    () =>
+      backgroundAtmosphere(
+        status?.background_preview || "auto",
+        themeClock,
+        weather
+      ),
+    [status?.background_preview, themeClock, weather]
+  );
   const background = useMemo(
-    () => timeOfDayTheme(themeClock, weather),
-    [themeClock, weather]
+    () => timeOfDayTheme(atmosphere.now, atmosphere.weather),
+    [atmosphere]
   );
 
   if (!status) return <div class="startup-screen">Starting Home Dashboard…</div>;
   if (!status.authenticated)
-    return <PinLogin onSuccess={loadStatus} onToast={showToast} />;
+    return (
+      <PinLogin
+        localDevice={status.local}
+        onSuccess={loadStatus}
+        onToast={showToast}
+      />
+    );
   if (!status.setup_complete && status.local)
     return (
       <div
@@ -261,12 +279,12 @@ export function App() {
       }}
     >
       <WeatherCanvas
-        code={Number(weather?.current?.weather_code || 0)}
+        code={atmosphere.code}
         reduced={status.reduced_motion}
         effect={status.weather_effects}
-        windSpeed={Number(weather?.current?.wind_speed_10m || 0)}
-        isDay={Boolean(Number(weather?.current?.is_day ?? 1))}
-        cloudCover={Number(weather?.current?.cloud_cover || 0)}
+        windSpeed={atmosphere.windSpeed}
+        isDay={atmosphere.isDay}
+        cloudCover={atmosphere.cloudCover}
       />
       <nav class="main-nav glass">
         <button
@@ -322,6 +340,7 @@ export function App() {
             garbagePickupWeekday={status.garbage_pickup_weekday}
             reducedMotion={status.reduced_motion}
             awakeLock={status.display_awake_lock}
+            localDevice={status.local}
             onToggleAwakeLock={async () => {
               const result = await api<{ enabled: boolean }>(
                 `/display/awake-lock?enabled=${!status.display_awake_lock}`,
@@ -331,8 +350,12 @@ export function App() {
               showToast(result.enabled ? "Display locked awake" : "Automatic sleep restored");
             }}
             onScanNow={() => {
-              scannerQuickMode.value = true;
-              setScanPromptOpen(true);
+              if (status.local) {
+                scannerQuickMode.value = true;
+                setScanPromptOpen(true);
+              } else {
+                setCameraScanOpen(true);
+              }
             }}
           />
         )}
@@ -486,6 +509,15 @@ export function App() {
           </div>
         </Modal>
       )}
+      {cameraScanOpen && !scanned && (
+        <MobileBarcodeScanner
+          onClose={() => setCameraScanOpen(false)}
+          onScan={(barcode) => {
+            setCameraScanOpen(false);
+            beginScan(barcode);
+          }}
+        />
+      )}
 
       {scanned && scanDestination && (
         <ProductEntry
@@ -518,9 +550,11 @@ export function App() {
 }
 
 function PinLogin({
+  localDevice,
   onSuccess,
   onToast
 }: {
+  localDevice: boolean;
   onSuccess: () => void;
   onToast: (message: string) => void;
 }) {
@@ -530,23 +564,56 @@ function PinLogin({
       <section class="login-card glass">
         <h1>Home Dashboard</h1>
         <p>Enter the household PIN.</p>
-        <NumberPad
-          value={pin}
-          secret
-          onChange={(value) => setPin(value.slice(0, 12))}
-          onConfirm={async () => {
-            try {
-              await api("/auth/login", {
-                method: "POST",
-                ...jsonBody({ pin })
-              });
-              onSuccess();
-            } catch (error: any) {
-              setPin("");
-              onToast(error.message);
-            }
-          }}
-        />
+        {localDevice ? (
+          <NumberPad
+            value={pin}
+            secret
+            onChange={(value) => setPin(value.slice(0, 12))}
+            onConfirm={async () => {
+              try {
+                await api("/auth/login", {
+                  method: "POST",
+                  ...jsonBody({ pin })
+                });
+                onSuccess();
+              } catch (error: any) {
+                setPin("");
+                onToast(error.message);
+              }
+            }}
+          />
+        ) : (
+          <form
+            class="native-pin-login"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              if (!pin) return;
+              try {
+                await api("/auth/login", {
+                  method: "POST",
+                  ...jsonBody({ pin })
+                });
+                onSuccess();
+              } catch (error: any) {
+                setPin("");
+                onToast(error.message);
+              }
+            }}
+          >
+            <input
+              type="password"
+              inputMode="numeric"
+              autocomplete="current-password"
+              value={pin}
+              autofocus
+              placeholder="Household PIN"
+              onInput={(event) => setPin(event.currentTarget.value.slice(0, 12))}
+            />
+            <button class="button primary" type="submit" disabled={!pin}>
+              Open dashboard
+            </button>
+          </form>
+        )}
       </section>
     </div>
   );

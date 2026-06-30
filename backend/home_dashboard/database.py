@@ -231,6 +231,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "display_sleep_mode": "hdmi",
     "display_output": "HDMI-A-1",
     "weather_effects": "full",
+    "background_preview": "auto",
     "reduced_motion": False,
     "onscreen_keyboard_enabled": True,
     "alert_wake_severities": ["Extreme"],

@@ -30,6 +30,7 @@ interface Props {
   garbagePickupWeekday: number;
   reducedMotion: boolean;
   awakeLock: boolean;
+  localDevice: boolean;
   onToggleAwakeLock: () => void;
   onScanNow: () => void;
 }
@@ -96,6 +97,7 @@ export function HomeScreen({
   garbagePickupWeekday,
   reducedMotion,
   awakeLock,
+  localDevice,
   onToggleAwakeLock,
   onScanNow
 }: Props) {
@@ -533,14 +535,16 @@ export function HomeScreen({
         >
           ▥
         </button>
-        <button
-          class={`awake-lock-button ${awakeLock ? "active" : ""}`}
-          onClick={onToggleAwakeLock}
-          aria-label={awakeLock ? "Allow display to sleep" : "Keep display awake"}
-          title={awakeLock ? "Display locked awake" : "Keep display awake"}
-        >
-          <span class={`lock-glyph ${awakeLock ? "locked" : ""}`} aria-hidden="true" />
-        </button>
+        {localDevice && (
+          <button
+            class={`awake-lock-button ${awakeLock ? "active" : ""}`}
+            onClick={onToggleAwakeLock}
+            aria-label={awakeLock ? "Allow display to sleep" : "Keep display awake"}
+            title={awakeLock ? "Display locked awake" : "Keep display awake"}
+          >
+            <span class={`lock-glyph ${awakeLock ? "locked" : ""}`} aria-hidden="true" />
+          </button>
+        )}
         <div class="running-timers">
           {timers.map((timer) => (
             <button
@@ -594,11 +598,34 @@ export function HomeScreen({
             ))}
           </div>
           <h3>Custom minutes</h3>
-          <NumberPad
-            value={customTimer}
-            onChange={(value) => setCustomTimer(value.slice(0, 3))}
-            onConfirm={() => addTimer(Math.max(1, Number(customTimer)))}
-          />
+          {localDevice ? (
+            <NumberPad
+              value={customTimer}
+              onChange={(value) => setCustomTimer(value.slice(0, 3))}
+              onConfirm={() => addTimer(Math.max(1, Number(customTimer)))}
+            />
+          ) : (
+            <div class="native-timer-entry">
+              <input
+                type="number"
+                inputMode="numeric"
+                min="1"
+                max="999"
+                value={customTimer}
+                placeholder="Minutes"
+                onInput={(event) =>
+                  setCustomTimer(event.currentTarget.value.slice(0, 3))
+                }
+              />
+              <button
+                class="button primary"
+                disabled={!Number(customTimer)}
+                onClick={() => addTimer(Math.max(1, Number(customTimer)))}
+              >
+                Start timer on dashboard
+              </button>
+            </div>
+          )}
         </Modal>
       )}
 
