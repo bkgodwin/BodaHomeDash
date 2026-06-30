@@ -55,7 +55,7 @@ function WindCompass({
       <small>Wind</small>
       <div class="wind-compass">
         {["N", "E", "S", "W"].map((point) => <b class={`point-${point.toLowerCase()}`}>{point}</b>)}
-        <i style={{ transform: `rotate(${direction}deg)` }}>▲</i>
+        <i style={{ transform: `rotate(${direction}deg)` }}>▼</i>
         <span>
           <strong>{formatValue(speed)}</strong>
           <small>{unit.replace("mp/h", "mph")}</small>
@@ -79,10 +79,13 @@ function TemperatureGraph({
   const high = Math.ceil((Math.max(...values) + 5) / 10) * 10;
   const range = Math.max(10, high - low);
   const width = Math.max(1100, indices.length * 96);
-  const height = 210;
+  const height = Math.max(300, window.innerHeight - 400);
+  const chartTop = 38;
+  const chartBottom = height - 35;
+  const plotHeight = chartBottom - chartTop;
   const points = values.map((value, index) => ({
     x: 48 + index * ((width - 80) / Math.max(1, values.length - 1)),
-    y: 20 + ((high - value) / range) * 150
+    y: chartTop + ((high - value) / range) * plotHeight
   }));
   const path = points.reduce(
     (result, point, index) =>
@@ -91,19 +94,23 @@ function TemperatureGraph({
         : `${result} Q ${(points[index - 1].x + point.x) / 2} ${points[index - 1].y}, ${point.x} ${point.y}`,
     ""
   );
-  const area = `${path} L ${points.at(-1)?.x || width - 30} 185 L ${points[0]?.x || 48} 185 Z`;
+  const area = `${path} L ${points.at(-1)?.x || width - 30} ${chartBottom} L ${points[0]?.x || 48} ${chartBottom} Z`;
   const lines = [];
   for (let value = low; value <= high; value += 10) lines.push(value);
   return (
     <section class="temperature-graph">
       <header>
         <strong>{mode === "temperature_2m" ? "Temperature" : "Feels like"} trend</strong>
-        <div class="segmented compact">
-          <button class={mode === "temperature_2m" ? "active" : ""} onClick={() => setMode("temperature_2m")}>Temperature</button>
-          <button class={mode === "apparent_temperature" ? "active" : ""} onClick={() => setMode("apparent_temperature")}>Feels like</button>
-        </div>
+        <button
+          type="button"
+          class={`graph-mode-switch ${mode === "apparent_temperature" ? "feels-like" : ""}`}
+          aria-pressed={mode === "apparent_temperature"}
+          onClick={() => setMode(mode === "temperature_2m" ? "apparent_temperature" : "temperature_2m")}
+        >
+          <span>Temperature</span><i /><span>Feels like</span>
+        </button>
       </header>
-      <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" style={{ width }}>
+      <svg viewBox={`0 0 ${width} ${height}`} style={{ width, height }}>
         <defs>
           <linearGradient id="temperature-fill" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stop-color="rgba(255,255,255,.36)" />
@@ -111,7 +118,7 @@ function TemperatureGraph({
           </linearGradient>
         </defs>
         {lines.map((value) => {
-          const y = 20 + ((high - value) / range) * 150;
+          const y = chartTop + ((high - value) / range) * plotHeight;
           return <g><line x1="40" x2={width - 20} y1={y} y2={y} /><text x="4" y={y + 5}>{value}°</text></g>;
         })}
         <path class="temperature-area" d={area} />
@@ -209,7 +216,12 @@ export function WeatherScreen({
     },
     {
       label: "Pressure",
-      value: `${formatValue(current.pressure_msl)} ${weather.units.pressure || "hPa"}`,
+      value: `${formatValue(
+        weather.units.pressure?.toLowerCase().includes("in")
+          ? current.pressure_msl
+          : Number(current.pressure_msl) / 33.8639,
+        2
+      )} inHg`,
       secondary: `UV ${formatValue(air.uv_index ?? current.uv_index, 1)}`,
       concern: Number(air.uv_index ?? current.uv_index) >= 8
     },
@@ -227,7 +239,7 @@ export function WeatherScreen({
       label: "Sun",
       value:
         todayIndex >= 0
-          ? `↑ ${new Date(String(weather.daily.sunrise[todayIndex])).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+          ? `Sunrise ${new Date(String(weather.daily.sunrise[todayIndex])).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
           : "—",
       secondary:
         todayIndex >= 0
@@ -304,6 +316,7 @@ export function WeatherScreen({
             <RadarMap
               latitude={weather.latitude}
               longitude={weather.longitude}
+              isDay={Boolean(Number(current.is_day ?? 1))}
             />
           </section>
         </div>

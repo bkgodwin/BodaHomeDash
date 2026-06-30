@@ -68,6 +68,11 @@ class ReminderCreate(BaseModel):
 class ReminderUpdate(BaseModel):
     text: str | None = Field(default=None, min_length=1, max_length=500)
     completed: bool | None = None
+    high_priority: bool | None = None
+
+
+class ReminderReorder(BaseModel):
+    item_ids: list[int] = Field(min_length=1, max_length=500)
 
 
 class TimerCreate(BaseModel):

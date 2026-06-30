@@ -2093,3 +2093,48 @@ select:focus-visible {
 @media(max-width:900px){.condition-dashboard{grid-template-columns:1fr 1fr}.condition-dashboard .condition-card-grid{grid-column:1/-1}.batch-note-editor{grid-template-columns:1fr}.pantry-row{grid-template-columns:50px 1fr 45px}.pantry-row-actions{grid-column:3;grid-row:1/3;flex-direction:column;gap:7px}.app-credits{max-width:calc(100vw - 110px);flex-wrap:wrap;justify-content:flex-end}}
 .temperature-graph svg{height:calc(100vh - 400px);min-height:300px}
 .batch-note-editor textarea{width:100%;padding:12px;border:1px solid #ffffff2e;border-radius:12px;color:#fff;background:#071d33a6;font:inherit;outline:none}.batch-note-editor textarea:focus{border-color:#7ec8f3;box-shadow:0 0 0 3px #5bb6ef24}
+
+.modal-advisory{overflow:hidden;border-color:#ffd66ba8;background:radial-gradient(circle at 50% -20%,#ffd35d75,transparent 62%),linear-gradient(145deg,#6c5016f7,#251d12fa);box-shadow:0 0 70px #d5a72b57,inset 0 1px #fff3b83d}
+.modal-emergency{animation-duration:1.75s}
+@keyframes emergency-pulse{0%,100%{border-color:#ff6262b8;box-shadow:0 0 70px #e71e2d70,inset 0 1px #ffffff2e;transform:scale(1)}50%{border-color:#ffb0b0;box-shadow:0 0 135px #ff2638d4,inset 0 0 65px #ff3f3f38;transform:scale(1.008)}}
+
+.alert-preference-grid{display:grid;grid-template-columns:minmax(150px,1fr) 78px 78px;gap:8px 12px;align-items:center;margin:14px 0;padding:12px;border:1px solid #ffffff1f;border-radius:14px;background:#ffffff0a}
+.alert-preference-grid>span{text-align:center;color:var(--text-muted);font-size:.75rem;font-weight:700}.setting-toggle.compact{min-height:34px;justify-content:center;padding:2px}.setting-toggle.compact>span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
+
+.reminder-row.high-priority,.checklist label.high-priority{border:1px solid #f1c85fbf;background:linear-gradient(90deg,#d8a72e24,transparent);box-shadow:inset 0 0 14px #e5bd4921}
+.checklist label.high-priority{margin:3px 1px;padding:3px 6px;border-radius:9px}
+.reminder-drag-handle,.priority-button{width:42px;height:42px;flex:0 0 42px;border:1px solid #ffffff24;border-radius:12px;color:var(--text-muted);background:#ffffff0b;font-weight:800;touch-action:none}
+.reminder-drag-handle{cursor:grab;font-size:1.2rem}.reminder-drag-handle:active{cursor:grabbing}.priority-button.active{color:#17120a;border-color:#ffd76a;background:#ffd76a;box-shadow:0 0 16px #e7b93d61}.reminder-row.dragging{opacity:.68;transform:scale(.992);background:#6db8e226}
+
+.graph-mode-switch{display:grid;grid-template-columns:auto 42px auto;gap:8px;align-items:center;min-height:36px;padding:4px 10px;border:1px solid #ffffff26;border-radius:999px;color:#fff;background:#071a2e99;font-size:.72rem;font-weight:700;backdrop-filter:blur(12px)}
+.graph-mode-switch i{position:relative;width:42px;height:22px;border-radius:999px;background:#ffffff24;box-shadow:inset 0 1px 4px #0005}.graph-mode-switch i:after{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 2px 6px #0006;transition:transform .22s ease}.graph-mode-switch.feels-like i:after{transform:translateX(20px)}.graph-mode-switch span{opacity:.55}.graph-mode-switch:not(.feels-like) span:first-child,.graph-mode-switch.feels-like span:last-child{opacity:1}
+.temperature-graph line{stroke-width:.5}.temperature-line{stroke-width:1.5}.temperature-graph text{font-family:inherit}
+
+@media(max-width:900px){
+  .weather-page{overflow-y:auto;overscroll-behavior:contain}
+  .weather-page-header{position:sticky;top:0;z-index:20;min-height:118px;background:#102746e8;backdrop-filter:blur(16px)}
+  .weather-page .conditions-layout{height:auto;display:flex;flex-direction:column;padding-bottom:34px}
+  .condition-dashboard{display:grid;grid-template-columns:1fr 1fr;min-height:auto}
+  .condition-now-card,.wind-compass-card{min-height:205px}
+  .condition-dashboard .condition-card-grid{grid-column:1/-1;grid-template-columns:repeat(2,minmax(0,1fr))}
+  .condition-dashboard .condition-card-grid article{min-height:105px}
+  .radar-panel{height:58vh;min-height:420px;flex:0 0 auto;margin-top:8px}
+  .weather-tab-content{height:auto;min-height:calc(100vh - 145px)}
+  .daily-detail-list{overflow:visible}
+}
+
+@media(max-width:560px){
+  .weather-page-header{min-height:150px;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto auto;gap:8px;padding:12px 14px}
+  .weather-page-header>div:first-child{grid-column:1;grid-row:1;min-width:0}
+  .weather-page-header>div:first-child p{max-width:180px;white-space:normal}
+  .weather-page-header .weather-hero{grid-column:2;grid-row:1;gap:6px}
+  .weather-page-header .weather-hero b{font-size:1.8rem}.weather-page-header .weather-hero strong{font-size:1.5rem}
+  .weather-tabs{grid-column:1/-1;grid-row:2;width:100%;display:grid;grid-template-columns:repeat(3,1fr);overflow:visible}
+  .weather-tabs button{padding:0 6px;font-size:.72rem;white-space:nowrap}
+  .condition-dashboard{grid-template-columns:1fr}
+  .condition-dashboard .condition-card-grid{grid-column:1;grid-template-columns:1fr}
+  .weather-tabs{max-width:100%;overflow-x:auto}
+  .radar-layer-controls button{padding:4px 8px;font-size:.64rem}
+  .alert-preference-grid{grid-template-columns:minmax(110px,1fr) 60px 60px}
+  .graph-mode-switch{grid-template-columns:auto 36px auto;gap:5px;padding:4px 7px}
+}

@@ -14,6 +14,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import holidays
+import httpx
 import psutil
 import uvicorn
 from fastapi import (
@@ -47,6 +48,7 @@ from .models import (
     PantryAdd,
     PinSetup,
     ReminderCreate,
+    ReminderReorder,
     ReminderUpdate,
     SettingsUpdate,
     ShoppingCreate,
@@ -801,8 +803,13 @@ async def clear_purchased():
 
 @app.get("/api/v1/reminders")
 def reminders():
+    order = (
+        "completed,position,created_at"
+        if database.setting("completed_reminders_last", True)
+        else "position,created_at"
+    )
     return database.all(
-        "SELECT * FROM reminders ORDER BY completed,position,created_at"
+        f"SELECT * FROM reminders ORDER BY {order}"
     )
 
 
@@ -831,12 +838,18 @@ async def update_reminder(reminder_id: int, payload: ReminderUpdate):
     completed = (
         int(payload.completed) if payload.completed is not None else item["completed"]
     )
+    high_priority = (
+        int(payload.high_priority)
+        if payload.high_priority is not None
+        else item["high_priority"]
+    )
     database.execute(
-        """UPDATE reminders SET text=?,completed=?,completed_at=?,updated_at=?
+        """UPDATE reminders SET text=?,completed=?,high_priority=?,completed_at=?,updated_at=?
            WHERE id=?""",
         (
             text_value,
             completed,
+            high_priority,
             utcnow() if completed else None,
             utcnow(),
             reminder_id,
@@ -845,6 +858,24 @@ async def update_reminder(reminder_id: int, payload: ReminderUpdate):
     row = database.one("SELECT * FROM reminders WHERE id=?", (reminder_id,))
     await hub.broadcast("reminders.updated", row)
     return row
+
+
+@app.post("/api/v1/reminders/reorder")
+async def reorder_reminders(payload: ReminderReorder):
+    existing = {row["id"] for row in database.all("SELECT id FROM reminders")}
+    if set(payload.item_ids) != existing or len(payload.item_ids) != len(existing):
+        raise HTTPException(status_code=400, detail="Reminder order is incomplete")
+    now = utcnow()
+    with database.transaction() as connection:
+        connection.executemany(
+            "UPDATE reminders SET position=?,updated_at=? WHERE id=?",
+            [
+                (position, now, reminder_id)
+                for position, reminder_id in enumerate(payload.item_ids)
+            ],
+        )
+    await hub.broadcast("reminders.updated", {"reordered": True})
+    return reminders()
 
 
 @app.delete("/api/v1/reminders/{reminder_id}")
@@ -905,7 +936,7 @@ def weather():
 
 @app.get("/api/v1/weather/alerts")
 def active_alerts():
-    return database.all(
+    rows = database.all(
         """SELECT wa.*,
                   CASE WHEN ad.alert_id IS NULL THEN 0 ELSE 1 END AS dismissed
            FROM weather_alerts wa
@@ -914,6 +945,66 @@ def active_alerts():
            WHERE wa.active=1
            ORDER BY CASE wa.severity WHEN 'Extreme' THEN 0 WHEN 'Severe' THEN 1
                WHEN 'Moderate' THEN 2 ELSE 3 END,wa.effective_at"""
+    )
+    return [
+        row
+        for row in rows
+        if database.setting(
+            "alert_emergency_enabled"
+            if row["severity"] == "Extreme"
+            else "alert_warning_enabled"
+            if row["severity"] == "Severe"
+            else "alert_advisory_enabled",
+            True,
+        )
+    ]
+
+
+@app.get("/api/v1/weather/map/{layer}")
+async def weather_map_proxy(layer: str, request: Request):
+    if layer not in {"temperature", "wind"}:
+        raise HTTPException(status_code=404, detail="Unknown weather map layer")
+    query = {key.lower(): value for key, value in request.query_params.items()}
+    try:
+        bbox_values = [float(value) for value in query["bbox"].split(",")]
+        width = min(1024, max(64, int(query.get("width", "256"))))
+        height = min(1024, max(64, int(query.get("height", "256"))))
+    except (KeyError, ValueError) as error:
+        raise HTTPException(status_code=400, detail="Invalid map tile request") from error
+    if len(bbox_values) != 4 or any(not (-3e8 <= value <= 3e8) for value in bbox_values):
+        raise HTTPException(status_code=400, detail="Invalid map bounds")
+    upstream = (
+        "https://mapservices.weather.noaa.gov/raster/services/"
+        "NDFD/NDFD_temp/MapServer/WMSServer"
+        if layer == "temperature"
+        else "https://mapservices.weather.noaa.gov/vector/services/"
+        "obs/surface_obs/MapServer/WMSServer"
+    )
+    params = {
+        "service": "WMS",
+        "version": "1.1.1",
+        "request": "GetMap",
+        "layers": "6" if layer == "temperature" else "5",
+        "styles": "",
+        "format": "image/png",
+        "transparent": "true",
+        "srs": query.get("srs", "EPSG:3857"),
+        "bbox": ",".join(str(value) for value in bbox_values),
+        "width": str(width),
+        "height": str(height),
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+            response = await client.get(upstream, params=params)
+            response.raise_for_status()
+    except httpx.HTTPError as error:
+        raise HTTPException(status_code=502, detail="NOAA map layer unavailable") from error
+    if "image" not in response.headers.get("content-type", ""):
+        raise HTTPException(status_code=502, detail="NOAA returned an invalid map layer")
+    return Response(
+        content=response.content,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=300"},
     )
 
 
@@ -1053,14 +1144,24 @@ async def hardware_test(payload: HardwareTest):
     }
     if payload.kind in previews:
         severity = previews[payload.kind]["severity"]
-        if severity == "Extreme":
+        category = (
+            "emergency"
+            if severity == "Extreme"
+            else "warning"
+            if severity == "Severe"
+            else "advisory"
+        )
+        audio_enabled = database.setting(
+            f"alert_{category}_audio", category != "advisory"
+        )
+        if severity == "Extreme" and audio_enabled:
             services.audio.play_bursts(
                 "alert",
                 int(database.setting("alert_volume", 55)),
                 [3, 3],
                 key="weather-preview",
             )
-        else:
+        elif audio_enabled:
             services.audio.play_bursts(
                 "alert",
                 int(database.setting("alert_volume", 55)),

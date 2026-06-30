@@ -88,6 +88,8 @@ export interface Reminder {
   id: number;
   text: string;
   completed: number;
+  high_priority: number;
+  position: number;
 }
 
 export interface Timer {

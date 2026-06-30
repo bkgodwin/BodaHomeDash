@@ -6,7 +6,7 @@ interface Props {
   onClose?: () => void;
   wide?: boolean;
   danger?: boolean;
-  severity?: "warning" | "emergency";
+  severity?: "advisory" | "warning" | "emergency";
 }
 
 export function Modal({ title, children, onClose, wide, danger, severity }: Props) {

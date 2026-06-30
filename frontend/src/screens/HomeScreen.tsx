@@ -4,7 +4,6 @@ import { Modal } from "../components/Modal";
 import { NumberPad, TouchKeyboard } from "../components/TouchKeyboard";
 import { onScreenKeyboardEnabled } from "../inputPreferences";
 import { ConfirmDialog } from "../components/ConfirmDialog";
-import { SwipeActionRow } from "../components/SwipeActionRow";
 import {
   centeredHourlyIndices,
   roundTemperature,
@@ -193,20 +192,7 @@ export function HomeScreen({
       method: "PATCH",
       ...jsonBody({ completed: !item.completed })
     });
-    setReminders((items) =>
-      items.map((candidate) =>
-        candidate.id === item.id
-          ? { ...candidate, completed: item.completed ? 0 : 1 }
-          : candidate
-      )
-    );
-  };
-
-  const deleteReminder = async (item: Reminder) => {
-    await api(`/reminders/${item.id}`, { method: "DELETE" });
-    setReminders((items) =>
-      items.filter((candidate) => candidate.id !== item.id)
-    );
+    setReminders(await api<Reminder[]>("/reminders"));
   };
 
   const addReminder = async () => {
@@ -483,19 +469,14 @@ export function HomeScreen({
           <div class="widget-scroll checklist">
             {reminders.length === 0 && <p class="empty">Nothing pending</p>}
             {reminders.map((item) => (
-              <SwipeActionRow
-                actionLabel={`Delete ${item.text}`}
-                onAction={() => deleteReminder(item)}
-              >
-                <label class={item.completed ? "completed" : ""}>
-                  <input
-                    type="checkbox"
-                    checked={Boolean(item.completed)}
-                    onChange={() => toggleReminder(item)}
-                  />
-                  <span>{item.text}</span>
-                </label>
-              </SwipeActionRow>
+              <label class={`${item.completed ? "completed" : ""} ${item.high_priority ? "high-priority" : ""}`}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(item.completed)}
+                  onChange={() => toggleReminder(item)}
+                />
+                <span>{item.text}</span>
+              </label>
             ))}
           </div>
         </article>

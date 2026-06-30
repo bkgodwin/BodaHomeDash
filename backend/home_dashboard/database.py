@@ -135,6 +135,7 @@ CREATE TABLE IF NOT EXISTS reminders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     text TEXT NOT NULL,
     completed INTEGER NOT NULL DEFAULT 0,
+    high_priority INTEGER NOT NULL DEFAULT 0,
     position INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     completed_at TEXT,
@@ -234,10 +235,17 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "onscreen_keyboard_enabled": True,
     "alert_wake_severities": ["Extreme"],
     "alert_sound_severities": ["Severe", "Extreme"],
+    "alert_advisory_enabled": True,
+    "alert_warning_enabled": True,
+    "alert_emergency_enabled": True,
+    "alert_advisory_audio": False,
+    "alert_warning_audio": True,
+    "alert_emergency_audio": True,
     "alert_volume": 55,
     "timer_volume": 60,
     "scanner_device": "",
     "auto_purchase_match": True,
+    "completed_reminders_last": True,
     "remote_access_enabled": False,
     "mobile_dash_ipv4": "",
     "backup_enabled": False,
@@ -315,6 +323,17 @@ class Database:
                 connection.execute(
                     "ALTER TABLE products "
                     "ADD COLUMN serving_size TEXT NOT NULL DEFAULT ''"
+                )
+            reminder_columns = {
+                row[1]
+                for row in connection.execute(
+                    "PRAGMA table_info(reminders)"
+                ).fetchall()
+            }
+            if "high_priority" not in reminder_columns:
+                connection.execute(
+                    "ALTER TABLE reminders "
+                    "ADD COLUMN high_priority INTEGER NOT NULL DEFAULT 0"
                 )
             now = utcnow()
             connection.executemany(

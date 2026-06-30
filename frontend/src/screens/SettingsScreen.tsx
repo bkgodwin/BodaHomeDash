@@ -304,6 +304,16 @@ export function SettingsScreen({
                 }
               />
               <SettingToggle
+                label="Move completed reminders to the bottom"
+                checked={settings.completed_reminders_last}
+                onChange={(value) =>
+                  setSettings({
+                    ...settings,
+                    completed_reminders_last: value
+                  })
+                }
+              />
+              <SettingToggle
                 label="Show garbage pickup reminder"
                 checked={settings.garbage_pickup_enabled}
                 onChange={(value) =>
@@ -351,6 +361,8 @@ export function SettingsScreen({
                     weather_effects: settings.weather_effects,
                     onscreen_keyboard_enabled:
                       settings.onscreen_keyboard_enabled,
+                    completed_reminders_last:
+                      settings.completed_reminders_last,
                     garbage_pickup_enabled:
                       settings.garbage_pickup_enabled,
                     garbage_pickup_weekday:
@@ -422,14 +434,58 @@ export function SettingsScreen({
                     <option value="celsius">Celsius</option>
                   </select>
                 </label>
+                <div class="alert-preference-grid">
+                  <strong>Weather alert controls</strong>
+                  <span>Show</span>
+                  <span>Audio</span>
+                  {([
+                    ["advisory", "Advisories"],
+                    ["warning", "Warnings"],
+                    ["emergency", "Emergencies"]
+                  ] as [string, string][]).map(([key, label]) => (
+                    <>
+                      <b>{label}</b>
+                      <SettingToggle
+                        label={`Show ${label.toLowerCase()}`}
+                        compact
+                        checked={settings[`alert_${key}_enabled`]}
+                        onChange={(value) =>
+                          setSettings({
+                            ...settings,
+                            [`alert_${key}_enabled`]: value
+                          })
+                        }
+                      />
+                      <SettingToggle
+                        label={`${label} audio`}
+                        compact
+                        checked={settings[`alert_${key}_audio`]}
+                        onChange={(value) =>
+                          setSettings({
+                            ...settings,
+                            [`alert_${key}_audio`]: value
+                          })
+                        }
+                      />
+                    </>
+                  ))}
+                </div>
                 <p class="hint">
-                  Extreme NWS alerts wake the display and sound once. Other alerts
-                  appear the next time someone approaches.
+                  Emergency alerts wake the display. Disabled alert types are
+                  retained in the sync cache but do not appear or sound.
                 </p>
                 <button
                   class="button primary"
                   onClick={() =>
-                    save({ temperature_unit: settings.temperature_unit })
+                    save({
+                      temperature_unit: settings.temperature_unit,
+                      alert_advisory_enabled: settings.alert_advisory_enabled,
+                      alert_warning_enabled: settings.alert_warning_enabled,
+                      alert_emergency_enabled: settings.alert_emergency_enabled,
+                      alert_advisory_audio: settings.alert_advisory_audio,
+                      alert_warning_audio: settings.alert_warning_audio,
+                      alert_emergency_audio: settings.alert_emergency_audio
+                    })
                   }
                 >
                   Save weather settings
@@ -1134,14 +1190,16 @@ function SettingsCard({
 function SettingToggle({
   label,
   checked,
-  onChange
+  onChange,
+  compact = false
 }: {
   label: string;
   checked: boolean;
   onChange: (value: boolean) => void;
+  compact?: boolean;
 }) {
   return (
-    <label class="setting-toggle">
+    <label class={`setting-toggle ${compact ? "compact" : ""}`}>
       <span>{label}</span>
       <input
         type="checkbox"

@@ -119,7 +119,10 @@ export function App() {
       ) {
         setRefreshToken((value) => value + 1);
       }
-      if (event === "settings.updated") loadStatus();
+      if (event === "settings.updated") {
+        loadStatus();
+        loadAtmosphere();
+      }
       if (event === "weather.updated" || event === "alerts.updated") {
         loadAtmosphere();
         if (event === "weather.updated") {
@@ -360,7 +363,13 @@ export function App() {
                 ? "Emergency Weather Alert"
                 : "Weather Alert"
           }
-          severity={dialogAlert?.severity === "Extreme" ? "emergency" : "warning"}
+          severity={
+            dialogAlert?.severity === "Extreme"
+              ? "emergency"
+              : dialogAlert?.severity === "Severe"
+                ? "warning"
+                : "advisory"
+          }
         >
           <article class="active-alert">
             <h2>{(previewAlert || emergency || regularAlert).event}</h2>

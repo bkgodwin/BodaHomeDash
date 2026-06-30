@@ -270,9 +270,6 @@ class DashboardServices:
             wake_severities = set(
                 self.database.setting("alert_wake_severities", ["Extreme"])
             )
-            sound_severities = set(
-                self.database.setting("alert_sound_severities", ["Extreme"])
-            ) | {"Severe", "Extreme"}
             new_emergency = False
             sound_emergency = False
             sound_warning = False
@@ -316,15 +313,27 @@ class DashboardServices:
                     ),
                 )
                 emergency = is_emergency_alert(item)
-                if changed and (
+                category = (
+                    "emergency"
+                    if emergency or item["severity"] == "Extreme"
+                    else "warning"
+                    if item["severity"] == "Severe"
+                    else "advisory"
+                )
+                enabled = bool(
+                    self.database.setting(f"alert_{category}_enabled", True)
+                )
+                audio_enabled = bool(
+                    self.database.setting(
+                        f"alert_{category}_audio", category != "advisory"
+                    )
+                )
+                if enabled and changed and (
                     item["severity"] in wake_severities or emergency
                 ):
                     new_emergency = True
-                if changed and (
-                    item["severity"] in (sound_severities | {"Severe", "Extreme"})
-                    or emergency
-                ):
-                    if emergency or item["severity"] == "Extreme":
+                if enabled and audio_enabled and changed:
+                    if category == "emergency":
                         sound_emergency = True
                     else:
                         sound_warning = True
@@ -349,7 +358,7 @@ class DashboardServices:
                     [1],
                     key="weather-alert",
                 )
-            selected_severities = sound_severities | wake_severities
+            selected_severities = wake_severities | {"Severe", "Extreme"}
             if (new_emergency or sound_emergency) and selected_severities:
                 self.database.execute(
                     """UPDATE weather_alerts SET announced=1

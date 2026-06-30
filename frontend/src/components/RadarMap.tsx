@@ -4,6 +4,7 @@ import "leaflet/dist/leaflet.css";
 interface Props {
   latitude?: number;
   longitude?: number;
+  isDay?: boolean;
 }
 
 type WeatherLayer = "precipitation" | "temperature" | "wind";
@@ -14,11 +15,12 @@ const layerLabels: Record<WeatherLayer, string> = {
   wind: "Wind"
 };
 
-export function RadarMap({ latitude, longitude }: Props) {
+export function RadarMap({ latitude, longitude, isDay = true }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
   const leafletRef = useRef<any>(null);
   const overlayRef = useRef<any>(null);
+  const baseLayerRef = useRef<any>(null);
   const [layer, setLayer] = useState<WeatherLayer>("precipitation");
   const [mapReady, setMapReady] = useState(false);
   const [error, setError] = useState("");
@@ -41,10 +43,17 @@ export function RadarMap({ latitude, longitude }: Props) {
           attributionControl: true,
           preferCanvas: true
         });
-        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-          attribution: "© OpenStreetMap contributors",
-          maxZoom: 19
-        }).addTo(map);
+        baseLayerRef.current = L.tileLayer(
+          isDay
+            ? "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            : "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+          {
+            attribution: isDay
+              ? "© OpenStreetMap contributors"
+              : "© OpenStreetMap contributors © CARTO",
+            maxZoom: 19
+          }
+        ).addTo(map);
         L.circleMarker([latitude, longitude], {
           radius: 6,
           color: "#ffffff",
@@ -78,6 +87,25 @@ export function RadarMap({ latitude, longitude }: Props) {
       overlayRef.current = null;
     };
   }, [latitude, longitude]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const L = leafletRef.current;
+    if (!map || !L) return;
+    baseLayerRef.current?.remove();
+    baseLayerRef.current = L.tileLayer(
+      isDay
+        ? "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        : "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+      {
+        attribution: isDay
+          ? "© OpenStreetMap contributors"
+          : "© OpenStreetMap contributors © CARTO",
+        maxZoom: 19
+      }
+    ).addTo(map);
+    baseLayerRef.current.bringToBack();
+  }, [isDay, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -134,9 +162,9 @@ export function RadarMap({ latitude, longitude }: Props) {
         });
     } else if (layer === "temperature") {
       addWms(
-        "https://mapservices.weather.noaa.gov/raster/services/NDFD/NDFD_temp/MapServer/WMSServer",
+        "/api/v1/weather/map/temperature",
         {
-          layers: "8",
+          layers: "temperature",
           format: "image/png",
           transparent: true,
           opacity: 0.68,
@@ -146,9 +174,9 @@ export function RadarMap({ latitude, longitude }: Props) {
       );
     } else {
       addWms(
-        "https://mapservices.weather.noaa.gov/vector/services/obs/surface_obs/MapServer/WMSServer",
+        "/api/v1/weather/map/wind",
         {
-          layers: "200",
+          layers: "wind",
           format: "image/png",
           transparent: true,
           opacity: 0.9,

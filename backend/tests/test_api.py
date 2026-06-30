@@ -68,6 +68,30 @@ def test_reminders_and_timers(client):
     assert timer.json()["status"] == "running"
 
 
+def test_reminder_priority_reordering_and_completed_sort_setting(client):
+    first = client.post("/api/v1/reminders", json={"text": "First task"}).json()
+    second = client.post("/api/v1/reminders", json={"text": "Second task"}).json()
+    priority = client.patch(
+        f"/api/v1/reminders/{second['id']}", json={"high_priority": True}
+    )
+    assert priority.json()["high_priority"] == 1
+    all_items = client.get("/api/v1/reminders").json()
+    reversed_ids = [item["id"] for item in reversed(all_items)]
+    reordered = client.post(
+        "/api/v1/reminders/reorder", json={"item_ids": reversed_ids}
+    )
+    assert reordered.status_code == 200
+    client.patch(
+        "/api/v1/settings",
+        json={"values": {"completed_reminders_last": False}},
+    )
+    assert [item["id"] for item in client.get("/api/v1/reminders").json()] == reversed_ids
+    client.patch(
+        "/api/v1/settings",
+        json={"values": {"completed_reminders_last": True}},
+    )
+
+
 def test_calendar_holidays_and_expirations(client):
     start = date(date.today().year, 1, 1)
     end = start + timedelta(days=99)
