@@ -1673,6 +1673,15 @@ def exit_kiosk():
     marker.write_text("exit\n", encoding="utf-8")
 
     def close_browser() -> None:
+        # Stop the session launcher too, so this works immediately on a Pi
+        # upgrading from a release whose launcher did not understand the marker.
+        subprocess.run(
+            ["pkill", "-TERM", "-f", "/home-dashboard-kiosk"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+            check=False,
+        )
         subprocess.run(
             ["pkill", "-TERM", "-f", "chromium.*--kiosk"],
             stdout=subprocess.DEVNULL,
