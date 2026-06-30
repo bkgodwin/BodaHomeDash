@@ -5,6 +5,7 @@ import { NumberPad, TouchKeyboard } from "../components/TouchKeyboard";
 import { onScreenKeyboardEnabled } from "../inputPreferences";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import {
+  centeredDailyIndices,
   centeredHourlyIndices,
   roundTemperature,
   weatherGradient
@@ -31,6 +32,7 @@ interface Props {
   reducedMotion: boolean;
   awakeLock: boolean;
   localDevice: boolean;
+  mobileDashAddress: string;
   onToggleAwakeLock: () => void;
   onScanNow: () => void;
 }
@@ -98,6 +100,7 @@ export function HomeScreen({
   reducedMotion,
   awakeLock,
   localDevice,
+  mobileDashAddress,
   onToggleAwakeLock,
   onScanNow
 }: Props) {
@@ -124,6 +127,7 @@ export function HomeScreen({
   const [forecastMode, setForecastMode] = useState<"hourly" | "week">("hourly");
   const hourlyStripRef = useRef<HTMLDivElement>(null);
   const currentHourRef = useRef<HTMLDivElement>(null);
+  const currentDayRef = useRef<HTMLDivElement>(null);
 
   const load = async () => {
     const { gridStart, gridEnd } = monthBounds(month);
@@ -224,17 +228,12 @@ export function HomeScreen({
     [weather, now.getHours()]
   );
   const todayKey = keyForDate(now);
-  const dailyIndices = (weather?.daily?.time || [])
-    .map((_, index) => index)
-    .filter(
-      (index) => String(weather?.daily.time?.[index] || "") >= todayKey
-    )
-    .slice(0, 7);
+  const dailyIndices = centeredDailyIndices(weather, now, 4);
 
   useEffect(() => {
-    if (forecastMode !== "hourly") return;
     const strip = hourlyStripRef.current;
-    const current = currentHourRef.current;
+    const current =
+      forecastMode === "hourly" ? currentHourRef.current : currentDayRef.current;
     if (!strip || !current) return;
     strip.scrollTo({
       left:
@@ -374,7 +373,7 @@ export function HomeScreen({
                 class={forecastMode === "week" ? "active" : ""}
                 onClick={() => setForecastMode("week")}
               >
-                Week
+                9 Day
               </button>
             </div>
           </div>
@@ -428,7 +427,8 @@ export function HomeScreen({
                 );
                 return (
                   <div
-                    class="forecast-hour daily"
+                    ref={item === todayKey ? currentDayRef : undefined}
+                    class={`forecast-hour daily ${item === todayKey ? "current-day" : ""}`}
                     style={{
                       background: weatherGradient(code, {
                         weather,
@@ -572,6 +572,10 @@ export function HomeScreen({
           ))}
         </div>
       </footer>
+      <div class="mobile-home-credits" aria-label="Dashboard information">
+        <span>Mobile Dash @ {mobileDashAddress}</span>
+        <span>BodaDash | Made by Ben Godwin for Koda Godwin | Open Source | V1.0 (July 2026)</span>
+      </div>
 
       {selectedDay && (
         <Modal

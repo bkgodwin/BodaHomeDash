@@ -133,3 +133,22 @@ export interface WeatherAlert {
   expires_at: string;
   dismissed: number;
 }
+
+export interface RecipeIngredient {
+  name: string;
+  measure: string;
+}
+
+export interface Recipe {
+  recipe_id: string;
+  source: "themealdb" | "custom";
+  title: string;
+  category: string;
+  area: string;
+  image_url: string;
+  image_data: string;
+  ingredients: RecipeIngredient[];
+  steps: string[];
+  favorite: boolean;
+  custom: boolean;
+}

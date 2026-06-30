@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   centeredHourlyIndices,
+  centeredDailyIndices,
   roundTemperature,
   weatherGradient,
   weatherKind
@@ -45,5 +46,16 @@ describe("weather presentation", () => {
       3
     );
     expect(indices).toEqual([10, 11, 12, 13, 14, 15, 16]);
+  });
+
+  it("centers a nine-day forecast around today", () => {
+    const value = weather([]);
+    value.daily.time = Array.from(
+      { length: 9 },
+      (_, index) => `2026-06-${String(26 + index).padStart(2, "0")}`
+    );
+    expect(
+      centeredDailyIndices(value, new Date("2026-06-30T12:00:00"), 4)
+    ).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
   });
 });

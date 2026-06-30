@@ -80,6 +80,34 @@ class TimerCreate(BaseModel):
     label: str = Field(default="Timer", min_length=1, max_length=80)
 
 
+class RecipeIngredient(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    measure: str = Field(default="", max_length=100)
+
+
+class RecipeInput(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    category: str = Field(default="", max_length=100)
+    area: str = Field(default="", max_length=100)
+    image_data: str = Field(default="", max_length=5_500_000)
+    ingredients: list[RecipeIngredient] = Field(min_length=1, max_length=100)
+    steps: list[str] = Field(min_length=1, max_length=100)
+
+    @field_validator("title")
+    @classmethod
+    def clean_title(cls, value: str) -> str:
+        return " ".join(value.split())
+
+    @field_validator("image_data")
+    @classmethod
+    def valid_image(cls, value: str) -> str:
+        if value and not value.startswith(
+            ("data:image/jpeg;base64,", "data:image/png;base64,", "data:image/webp;base64,")
+        ):
+            raise ValueError("Custom recipe image must be JPEG, PNG, or WebP")
+        return value
+
+
 class PinSetup(BaseModel):
     pin: str = Field(pattern=r"^\d{4,12}$")
 

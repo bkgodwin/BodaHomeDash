@@ -19,6 +19,9 @@ The current implementation includes:
 - live timer countdown/progress displays and a temporary keep-awake lock;
 - PIR-controlled HDMI sleep or instant black-screen blanking;
 - PIN-protected phone layouts on the local network;
+- phone-camera barcode scanning with ZXing and a photo fallback;
+- searchable TheMealDB recipes, locally cached favorites, editable custom
+  recipes, and one-tap ingredient additions to the shopping list;
 - optional encrypted USB backups restorable during a fresh setup;
 - an optional garbage-pickup-day reminder beside the clock;
 - a touch-first setup wizard, optional full on-screen keyboard, physical
@@ -98,8 +101,10 @@ device-local key. USB backup bundles use AES-GCM with a key derived from the
 user's separate recovery password.
 
 The application contacts iCloud CalDAV, Open-Meteo, the National Weather
-Service, Open Food Facts, and the optional IP location provider. It does not
-require a cloud account of its own.
+Service, Open Food Facts, TheMealDB, and the optional IP location provider. It
+does not require a cloud account of its own. Personal installations use
+TheMealDB's developer key by default; a supporter key can be supplied through
+the `THEMEALDB_API_KEY` environment variable.
 
 Do not expose port 8765 directly to the internet. Use a trusted home network or
 Tailscale. Tailscale HTTPS is recommended for access away from home.

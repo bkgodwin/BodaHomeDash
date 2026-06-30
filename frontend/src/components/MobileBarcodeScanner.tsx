@@ -70,7 +70,72 @@ export function MobileBarcodeScanner({ onClose, onScan }: Props) {
     const url = URL.createObjectURL(file);
     try {
       const { BrowserMultiFormatReader } = await import("@zxing/browser");
-      const result = await new BrowserMultiFormatReader().decodeFromImageUrl(url);
+      const reader = new BrowserMultiFormatReader();
+      const image = new Image();
+      await new Promise<void>((resolve, reject) => {
+        image.onload = () => resolve();
+        image.onerror = () => reject(new Error("Photo format could not be read"));
+        image.src = url;
+      });
+      const crops = [
+        [0, 0, 1, 1],
+        [0.08, 0.08, 0.84, 0.84],
+        [0, 0.18, 1, 0.64],
+        [0, 0, 1, 0.58],
+        [0, 0.42, 1, 0.58]
+      ];
+      const attempts = crops.flatMap((crop) => [
+        { crop, rotation: 0, enhanced: false },
+        { crop, rotation: 0, enhanced: true },
+        { crop, rotation: 90, enhanced: false },
+        { crop, rotation: 270, enhanced: false }
+      ]);
+      let result: ReturnType<typeof reader.decodeFromCanvas> | null = null;
+      const canvas = document.createElement("canvas");
+      for (let index = 0; index < attempts.length && !result; index += 1) {
+        const { crop, rotation, enhanced } = attempts[index];
+        setMessage(`Reading barcode from photo… ${index + 1}/${attempts.length}`);
+        const [left, top, width, height] = crop;
+        const sourceWidth = image.naturalWidth * width;
+        const sourceHeight = image.naturalHeight * height;
+        const scale = Math.min(1, 1800 / Math.max(sourceWidth, sourceHeight));
+        const targetWidth = Math.max(1, Math.round(sourceWidth * scale));
+        const targetHeight = Math.max(1, Math.round(sourceHeight * scale));
+        canvas.width = rotation === 90 || rotation === 270 ? targetHeight : targetWidth;
+        canvas.height = rotation === 90 || rotation === 270 ? targetWidth : targetHeight;
+        const context = canvas.getContext("2d", { willReadFrequently: true });
+        if (!context) continue;
+        context.imageSmoothingEnabled = true;
+        context.imageSmoothingQuality = "high";
+        context.filter = enhanced ? "grayscale(1) contrast(1.7)" : "none";
+        if (rotation === 90) {
+          context.translate(canvas.width, 0);
+          context.rotate(Math.PI / 2);
+        } else if (rotation === 270) {
+          context.translate(0, canvas.height);
+          context.rotate(-Math.PI / 2);
+        }
+        context.drawImage(
+          image,
+          image.naturalWidth * left,
+          image.naturalHeight * top,
+          sourceWidth,
+          sourceHeight,
+          0,
+          0,
+          targetWidth,
+          targetHeight
+        );
+        try {
+          result = reader.decodeFromCanvas(canvas);
+        } catch {
+          // Try another crop, orientation, or contrast treatment.
+        }
+        await new Promise<void>((resolve) =>
+          window.requestAnimationFrame(() => resolve())
+        );
+      }
+      if (!result) throw new Error("No barcode found");
       if (!delivered.current) {
         delivered.current = true;
         onScan(result.getText());

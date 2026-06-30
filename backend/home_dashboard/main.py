@@ -8,6 +8,7 @@ import platform
 import re
 import shutil
 import subprocess
+import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
@@ -51,6 +52,7 @@ from .models import (
     ReminderCreate,
     ReminderReorder,
     ReminderUpdate,
+    RecipeInput,
     SettingsUpdate,
     ShoppingCreate,
     ShoppingUpdate,
@@ -58,6 +60,7 @@ from .models import (
     WifiConnect,
 )
 from .providers.calendar import ICloudCalendarProvider
+from .providers.recipes import normalize_meal
 from .security import AuthManager, SecretStore
 from .services import DashboardServices
 from .utils import normalize_barcode, normalize_name
@@ -1041,16 +1044,192 @@ def _sanitize_nhc_html(content: str) -> str:
     return content
 
 
+def _recipe_from_row(row: dict[str, Any]) -> dict[str, Any]:
+    result = dict(row)
+    result["ingredients"] = json.loads(result.pop("ingredients_json", "[]"))
+    result["steps"] = json.loads(result.pop("steps_json", "[]"))
+    result["favorite"] = bool(result["favorite"])
+    result["custom"] = bool(result["custom"])
+    return result
+
+
+def _cache_recipe(recipe: dict[str, Any], *, custom: bool = False) -> dict[str, Any]:
+    now = utcnow()
+    database.execute(
+        """INSERT INTO recipes(
+               recipe_id,source,title,category,area,image_url,image_data,
+               ingredients_json,steps_json,favorite,custom,created_at,updated_at
+           ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+           ON CONFLICT(recipe_id) DO UPDATE SET
+               source=excluded.source,title=excluded.title,category=excluded.category,
+               area=excluded.area,image_url=excluded.image_url,
+               image_data=CASE WHEN excluded.image_data='' THEN recipes.image_data ELSE excluded.image_data END,
+               ingredients_json=excluded.ingredients_json,steps_json=excluded.steps_json,
+               custom=MAX(recipes.custom,excluded.custom),updated_at=excluded.updated_at""",
+        (
+            recipe["recipe_id"],
+            recipe.get("source", "custom" if custom else "themealdb"),
+            recipe["title"],
+            recipe.get("category", ""),
+            recipe.get("area", ""),
+            recipe.get("image_url", ""),
+            recipe.get("image_data", ""),
+            json.dumps(recipe.get("ingredients", [])),
+            json.dumps(recipe.get("steps", [])),
+            int(bool(recipe.get("favorite", False))),
+            int(custom or bool(recipe.get("custom", False))),
+            now,
+            now,
+        ),
+    )
+    row = database.one("SELECT * FROM recipes WHERE recipe_id=?", (recipe["recipe_id"],))
+    assert row is not None
+    return _recipe_from_row(row)
+
+
+async def _mealdb_request(endpoint: str, **params: str) -> list[dict[str, Any]]:
+    api_key = os.getenv("THEMEALDB_API_KEY", "1")
+    response = await services.client.get(
+        f"https://www.themealdb.com/api/json/v1/{api_key}/{endpoint}",
+        params=params,
+        timeout=15,
+    )
+    response.raise_for_status()
+    return list(response.json().get("meals") or [])
+
+
+@app.get("/api/v1/recipes/search")
+async def search_recipes(query: str = Query(default="", max_length=100)):
+    cleaned = " ".join(query.split())
+    like = f"%{cleaned}%"
+    local_rows = database.all(
+        """SELECT * FROM recipes
+           WHERE (custom=1 OR favorite=1) AND (?='' OR title LIKE ?)
+           ORDER BY favorite DESC,custom DESC,title COLLATE NOCASE""",
+        (cleaned, like),
+    )
+    recipes = [_recipe_from_row(row) for row in local_rows]
+    offline = False
+    if cleaned:
+        try:
+            for meal in await _mealdb_request("search.php", s=cleaned):
+                normalized = _cache_recipe(normalize_meal(meal))
+                if not any(item["recipe_id"] == normalized["recipe_id"] for item in recipes):
+                    recipes.append(normalized)
+        except (httpx.HTTPError, ValueError):
+            offline = True
+    return {"recipes": recipes, "offline": offline}
+
+
+@app.get("/api/v1/recipes/favorites")
+def favorite_recipes():
+    return [
+        _recipe_from_row(row)
+        for row in database.all(
+            """SELECT * FROM recipes WHERE favorite=1 OR custom=1
+               ORDER BY favorite DESC,custom DESC,title COLLATE NOCASE"""
+        )
+    ]
+
+
+@app.get("/api/v1/recipes/{recipe_id}")
+async def recipe_detail(recipe_id: str):
+    row = database.one("SELECT * FROM recipes WHERE recipe_id=?", (recipe_id,))
+    if row:
+        return _recipe_from_row(row)
+    if not recipe_id.startswith("mealdb:"):
+        raise HTTPException(status_code=404, detail="Recipe not found")
+    try:
+        meals = await _mealdb_request("lookup.php", i=recipe_id.split(":", 1)[1])
+    except (httpx.HTTPError, ValueError) as error:
+        raise HTTPException(status_code=502, detail="Recipe provider unavailable") from error
+    if not meals:
+        raise HTTPException(status_code=404, detail="Recipe not found")
+    return _cache_recipe(normalize_meal(meals[0]))
+
+
+@app.put("/api/v1/recipes/{recipe_id}/favorite")
+async def set_recipe_favorite(recipe_id: str, favorite: bool):
+    row = database.one("SELECT * FROM recipes WHERE recipe_id=?", (recipe_id,))
+    if not row and recipe_id.startswith("mealdb:"):
+        await recipe_detail(recipe_id)
+        row = database.one("SELECT * FROM recipes WHERE recipe_id=?", (recipe_id,))
+    if not row:
+        raise HTTPException(status_code=404, detail="Recipe not found")
+    database.execute(
+        "UPDATE recipes SET favorite=?,updated_at=? WHERE recipe_id=?",
+        (int(favorite), utcnow(), recipe_id),
+    )
+    await hub.broadcast("recipes.updated", {"recipe_id": recipe_id})
+    updated = database.one("SELECT * FROM recipes WHERE recipe_id=?", (recipe_id,))
+    assert updated is not None
+    return _recipe_from_row(updated)
+
+
+@app.post("/api/v1/recipes/custom")
+async def create_custom_recipe(payload: RecipeInput):
+    recipe = {
+        **payload.model_dump(),
+        "recipe_id": f"custom:{uuid.uuid4()}",
+        "source": "custom",
+        "image_url": "",
+        "custom": True,
+    }
+    result = _cache_recipe(recipe, custom=True)
+    await hub.broadcast("recipes.updated", {"recipe_id": result["recipe_id"]})
+    return result
+
+
+@app.put("/api/v1/recipes/custom/{recipe_id}")
+async def update_custom_recipe(recipe_id: str, payload: RecipeInput):
+    full_id = recipe_id if recipe_id.startswith("custom:") else f"custom:{recipe_id}"
+    existing = database.one(
+        "SELECT favorite,image_data FROM recipes WHERE recipe_id=? AND custom=1",
+        (full_id,),
+    )
+    if not existing:
+        raise HTTPException(status_code=404, detail="Custom recipe not found")
+    recipe = {
+        **payload.model_dump(),
+        "recipe_id": full_id,
+        "source": "custom",
+        "image_url": "",
+        "image_data": payload.image_data or existing["image_data"],
+        "favorite": bool(existing["favorite"]),
+        "custom": True,
+    }
+    result = _cache_recipe(recipe, custom=True)
+    await hub.broadcast("recipes.updated", {"recipe_id": full_id})
+    return result
+
+
+@app.delete("/api/v1/recipes/custom/{recipe_id}", status_code=204)
+async def delete_custom_recipe(recipe_id: str):
+    full_id = recipe_id if recipe_id.startswith("custom:") else f"custom:{recipe_id}"
+    deleted = database.execute(
+        "DELETE FROM recipes WHERE recipe_id=? AND custom=1", (full_id,)
+    ).rowcount
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Custom recipe not found")
+    await hub.broadcast("recipes.updated", {"recipe_id": full_id})
+    return Response(status_code=204)
+
+
 @app.get("/api/v1/tropical")
 @app.get("/api/v1/tropical/{path:path}")
 async def tropical_weather_proxy(request: Request, path: str = ""):
     if ".." in path or "\\" in path or path.startswith("//"):
         raise HTTPException(status_code=400, detail="Invalid NHC path")
-    upstream = f"https://www.nhc.noaa.gov/{path.lstrip('/')}"
+    mobile_home = request.query_params.get("mobile") == "1" and not path
+    upstream_path = "mobile/" if mobile_home else path.lstrip("/")
+    upstream = f"https://www.nhc.noaa.gov/{upstream_path}"
+    upstream_params = [
+        item for item in request.query_params.multi_items() if item[0] != "mobile"
+    ]
     try:
         response = await services.client.get(
             upstream,
-            params=list(request.query_params.multi_items()),
+            params=upstream_params,
             timeout=20,
         )
         response.raise_for_status()

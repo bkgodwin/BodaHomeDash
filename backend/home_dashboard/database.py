@@ -159,6 +159,24 @@ CREATE TABLE IF NOT EXISTS weather_cache (
     expires_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS recipes (
+    recipe_id TEXT PRIMARY KEY,
+    source TEXT NOT NULL,
+    title TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT '',
+    area TEXT NOT NULL DEFAULT '',
+    image_url TEXT NOT NULL DEFAULT '',
+    image_data TEXT NOT NULL DEFAULT '',
+    ingredients_json TEXT NOT NULL DEFAULT '[]',
+    steps_json TEXT NOT NULL DEFAULT '[]',
+    favorite INTEGER NOT NULL DEFAULT 0,
+    custom INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_recipes_title ON recipes(title);
+CREATE INDEX IF NOT EXISTS idx_recipes_favorite ON recipes(favorite, custom);
+
 CREATE TABLE IF NOT EXISTS weather_alerts (
     alert_id TEXT PRIMARY KEY,
     event TEXT NOT NULL,

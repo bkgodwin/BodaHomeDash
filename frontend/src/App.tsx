@@ -8,6 +8,7 @@ import { WeatherCanvas } from "./components/WeatherCanvas";
 import { HomeScreen } from "./screens/HomeScreen";
 import { PantryScreen } from "./screens/PantryScreen";
 import { RemindersScreen } from "./screens/RemindersScreen";
+import { RecipesScreen } from "./screens/RecipesScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { ShoppingScreen } from "./screens/ShoppingScreen";
 import { WeatherScreen } from "./screens/WeatherScreen";
@@ -30,6 +31,7 @@ type Screen =
   | "pantry"
   | "shopping"
   | "reminders"
+  | "recipes"
   | "weather"
   | "settings";
 
@@ -37,7 +39,7 @@ export function App() {
   const [status, setStatus] = useState<Status | null>(null);
   const [screen, setScreen] = useState<Screen>(() => {
     const requested = new URLSearchParams(window.location.search).get("screen");
-    return ["home", "pantry", "shopping", "reminders", "weather", "settings"].includes(
+    return ["home", "pantry", "shopping", "reminders", "recipes", "weather", "settings"].includes(
       requested || ""
     )
       ? (requested as Screen)
@@ -65,6 +67,7 @@ export function App() {
   const toastTimer = useRef<number | null>(null);
   const [scanPromptOpen, setScanPromptOpen] = useState(false);
   const [cameraScanOpen, setCameraScanOpen] = useState(false);
+  const recipeWakeHeld = useRef(false);
 
   const showToast = (message: string) => {
     setToast(message);
@@ -123,6 +126,7 @@ export function App() {
           "pantry.updated",
           "shopping.updated",
           "reminders.updated",
+          "recipes.updated",
           "timers.updated",
           "settings.updated"
         ].includes(event) ||
@@ -154,9 +158,11 @@ export function App() {
       if (event === "display.sleep") setBlanked(payload?.mode === "blank");
       if (event === "display.wake") {
         setBlanked(false);
-        setScreen("home");
-        setHomeKey((value) => value + 1);
-        loadAtmosphere(true);
+        if (!recipeWakeHeld.current) {
+          setScreen("home");
+          setHomeKey((value) => value + 1);
+          loadAtmosphere(true);
+        }
       }
       if (event === "barcode.scanned") {
         beginScan(payload.barcode);
@@ -312,6 +318,12 @@ export function App() {
           <span>☑</span> Reminders
         </button>
         <button
+          class={screen === "recipes" ? "active" : ""}
+          onClick={() => setScreen("recipes")}
+        >
+          <span>♨</span> Recipes
+        </button>
+        <button
           class={screen === "weather" ? "active" : ""}
           onClick={() => setScreen("weather")}
         >
@@ -341,6 +353,7 @@ export function App() {
             reducedMotion={status.reduced_motion}
             awakeLock={status.display_awake_lock}
             localDevice={status.local}
+            mobileDashAddress={status.mobile_dash_address}
             onToggleAwakeLock={async () => {
               const result = await api<{ enabled: boolean }>(
                 `/display/awake-lock?enabled=${!status.display_awake_lock}`,
@@ -368,10 +381,45 @@ export function App() {
         {screen === "reminders" && (
           <RemindersScreen refreshToken={refreshToken} onToast={showToast} />
         )}
+        {screen === "recipes" && (
+          <RecipesScreen
+            refreshToken={refreshToken}
+            localDevice={status.local}
+            onToast={showToast}
+            onViewingChange={async (viewing) => {
+              if (!status.local) return;
+              try {
+                if (viewing && !status.display_awake_lock) {
+                  recipeWakeHeld.current = true;
+                  const result = await api<{ enabled: boolean }>(
+                    "/display/awake-lock?enabled=true",
+                    { method: "PUT" }
+                  );
+                  setStatus((current) =>
+                    current ? { ...current, display_awake_lock: result.enabled } : current
+                  );
+                } else if (!viewing && recipeWakeHeld.current) {
+                  recipeWakeHeld.current = false;
+                  const result = await api<{ enabled: boolean }>(
+                    "/display/awake-lock?enabled=false",
+                    { method: "PUT" }
+                  );
+                  setStatus((current) =>
+                    current ? { ...current, display_awake_lock: result.enabled } : current
+                  );
+                }
+              } catch (error: any) {
+                recipeWakeHeld.current = false;
+                showToast(`Could not change recipe keep-awake: ${error.message}`);
+              }
+            }}
+          />
+        )}
         {screen === "weather" && (
           <WeatherScreen
             refreshToken={refreshToken + weatherRefreshToken}
             onToast={showToast}
+            localDevice={status.local}
           />
         )}
         {screen === "settings" && (

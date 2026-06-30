@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 
 from home_dashboard.main import _sanitize_nhc_html
+from home_dashboard.providers.recipes import normalize_meal
 
 
 def test_status_and_settings(client):
@@ -24,6 +25,61 @@ def test_nhc_html_sanitizer_keeps_navigation_without_scripts():
     assert "<script" not in cleaned
     assert "onclick" not in cleaned
     assert 'href="/api/v1/tropical/storm.php"' in cleaned
+
+
+def test_mealdb_recipe_normalization():
+    recipe = normalize_meal(
+        {
+            "idMeal": "42",
+            "strMeal": "Bayou Supper",
+            "strIngredient1": "Rice",
+            "strMeasure1": "2 cups",
+            "strInstructions": "Rinse rice.\r\nCook until tender.",
+        }
+    )
+    assert recipe["recipe_id"] == "mealdb:42"
+    assert recipe["ingredients"] == [{"name": "Rice", "measure": "2 cups"}]
+    assert recipe["steps"] == ["Rinse rice.", "Cook until tender."]
+
+
+def test_custom_recipe_crud_and_favorite(client):
+    created = client.post(
+        "/api/v1/recipes/custom",
+        json={
+            "title": "Test Gumbo",
+            "category": "Dinner",
+            "area": "Louisiana",
+            "ingredients": [{"name": "Okra", "measure": "2 cups"}],
+            "steps": ["Slice the okra.", "Cook the gumbo."],
+            "image_data": "",
+        },
+    )
+    assert created.status_code == 200
+    recipe = created.json()
+    assert recipe["custom"] is True
+    detail = client.get(f"/api/v1/recipes/{recipe['recipe_id']}")
+    assert detail.status_code == 200
+    favorite = client.put(
+        f"/api/v1/recipes/{recipe['recipe_id']}/favorite?favorite=true"
+    )
+    assert favorite.json()["favorite"] is True
+    search = client.get("/api/v1/recipes/search").json()
+    assert search["recipes"][0]["title"] == "Test Gumbo"
+    updated = client.put(
+        f"/api/v1/recipes/custom/{recipe['recipe_id']}",
+        json={
+            "title": "Test Seafood Gumbo",
+            "category": "Dinner",
+            "area": "Louisiana",
+            "ingredients": [{"name": "Shrimp", "measure": "1 lb"}],
+            "steps": ["Cook until done."],
+            "image_data": "",
+        },
+    )
+    assert updated.json()["favorite"] is True
+    assert updated.json()["ingredients"][0]["name"] == "Shrimp"
+    deleted = client.delete(f"/api/v1/recipes/custom/{recipe['recipe_id']}")
+    assert deleted.status_code == 204
 
 
 def test_garbage_pickup_preferences_are_exposed(client):

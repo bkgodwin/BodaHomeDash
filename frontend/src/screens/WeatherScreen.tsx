@@ -3,6 +3,7 @@ import { api } from "../api";
 import { RadarMap } from "../components/RadarMap";
 import { Weather, WeatherAlert } from "../types";
 import {
+  centeredDailyIndices,
   centeredHourlyIndices,
   compassDirection,
   roundTemperature,
@@ -39,9 +40,16 @@ function formatValue(value: unknown, digits = 0): string {
   return Number.isFinite(number) ? number.toFixed(digits) : "—";
 }
 
-function TropicalWeatherPanel({ onExit }: { onExit: () => void }) {
+function TropicalWeatherPanel({
+  onExit,
+  localDevice
+}: {
+  onExit: () => void;
+  localDevice: boolean;
+}) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [loading, setLoading] = useState(true);
+  const homeUrl = localDevice ? "/api/v1/tropical" : "/api/v1/tropical?mobile=1";
   const navigate = (direction: "back" | "forward" | "home" | "reload") => {
     const browser = frame.current;
     if (!browser) return;
@@ -50,9 +58,9 @@ function TropicalWeatherPanel({ onExit }: { onExit: () => void }) {
       if (direction === "back") browser.contentWindow?.history.back();
       if (direction === "forward") browser.contentWindow?.history.forward();
       if (direction === "reload") browser.contentWindow?.location.reload();
-      if (direction === "home") browser.src = "/api/v1/tropical";
+      if (direction === "home") browser.src = homeUrl;
     } catch {
-      browser.src = "/api/v1/tropical";
+      browser.src = homeUrl;
     }
   };
   return (
@@ -73,7 +81,7 @@ function TropicalWeatherPanel({ onExit }: { onExit: () => void }) {
       <iframe
         ref={frame}
         class="tropical-frame"
-        src="/api/v1/tropical"
+        src={homeUrl}
         title="National Hurricane Center"
         sandbox="allow-same-origin allow-forms allow-downloads"
         onLoad={() => setLoading(false)}
@@ -174,16 +182,19 @@ function TemperatureGraph({
 
 export function WeatherScreen({
   refreshToken,
-  onToast
+  onToast,
+  localDevice
 }: {
   refreshToken: number;
   onToast: (message: string) => void;
+  localDevice: boolean;
 }) {
   const [weather, setWeather] = useState<Weather | null>(null);
   const [alerts, setAlerts] = useState<WeatherAlert[]>([]);
   const [tab, setTab] = useState<Tab>("conditions");
   const [tropicalOpen, setTropicalOpen] = useState(false);
   const currentHourRef = useRef<HTMLElement>(null);
+  const currentDayRef = useRef<HTMLElement>(null);
   useEffect(() => {
     Promise.all([
       api<Weather | null>("/weather"),
@@ -205,6 +216,16 @@ export function WeatherScreen({
       })
     );
   }, [tab, weather?.current?.time]);
+  useEffect(() => {
+    if (tab !== "week") return;
+    window.requestAnimationFrame(() =>
+      currentDayRef.current?.scrollIntoView({
+        behavior: "smooth",
+        inline: "nearest",
+        block: "center"
+      })
+    );
+  }, [tab, weather?.current?.time]);
   if (!weather)
     return (
       <main class="page-screen glass">
@@ -217,10 +238,7 @@ export function WeatherScreen({
   const precip24 = last24HourPrecipitation(weather);
   const hourlyIndices = centeredHourlyIndices(weather, new Date(), 18);
   const today = new Date().toISOString().slice(0, 10);
-  const dailyIndices = (weather.daily.time || [])
-    .map((_, index) => index)
-    .filter((index) => String(weather.daily.time[index]) >= today)
-    .slice(0, 7);
+  const dailyIndices = centeredDailyIndices(weather, new Date(), 4);
   const visibilityMiles =
     Number(current.visibility) /
     (weather.units.visibility === "m" ? 1609.344 : 5280);
@@ -306,6 +324,7 @@ export function WeatherScreen({
   if (tropicalOpen) {
     return (
       <TropicalWeatherPanel
+        localDevice={localDevice}
         onExit={() => {
           setTropicalOpen(false);
           setTab("conditions");
@@ -326,7 +345,7 @@ export function WeatherScreen({
             [
               ["conditions", "Conditions & Radar"],
               ["hourly", "Hourly"],
-              ["week", "7 Day"]
+              ["week", "9 Day"]
             ] as [Tab, string][]
           ).map(([value, label]) => (
             <button
@@ -427,6 +446,8 @@ export function WeatherScreen({
             const code = Number(weather.daily.weather_code[index]);
             return (
               <article
+                ref={time === today ? currentDayRef : undefined}
+                class={time === today ? "current-day" : ""}
                 style={{
                   background: weatherGradient(code, {
                     temperature: weather.daily.temperature_2m_max[index],

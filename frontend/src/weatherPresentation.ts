@@ -149,3 +149,23 @@ export function centeredHourlyIndices(
   const end = Math.min(times.length, current + radius + 1);
   return Array.from({ length: end - start }, (_, offset) => start + offset);
 }
+
+export function centeredDailyIndices(
+  weather: Weather | null,
+  now = new Date(),
+  radius = 4
+): number[] {
+  const dates = (weather?.daily.time || []).map(String);
+  if (!dates.length) return [];
+  const today = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, "0"),
+    String(now.getDate()).padStart(2, "0")
+  ].join("-");
+  let current = dates.indexOf(today);
+  if (current < 0) current = dates.findIndex((date) => date >= today);
+  if (current < 0) current = dates.length - 1;
+  const start = Math.max(0, current - radius);
+  const end = Math.min(dates.length, current + radius + 1);
+  return Array.from({ length: end - start }, (_, offset) => start + offset);
+}
