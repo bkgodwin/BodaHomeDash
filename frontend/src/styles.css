@@ -2078,7 +2078,7 @@ select:focus-visible {
 .radar-layer-controls{position:absolute;z-index:500;top:8px;left:50%;display:flex;padding:3px;border:1px solid #ffffff3d;border-radius:12px;background:#081b2ecc;box-shadow:0 6px 18px #00000042;transform:translateX(-50%);backdrop-filter:blur(12px)}
 .radar-layer-controls button{min-height:30px;padding:4px 12px;border:0;border-radius:9px;color:#ffffffbf;background:transparent;font-size:.72rem}.radar-layer-controls button.active{color:#fff;background:#5ea9e766}
 .radar-legend{position:absolute;z-index:500;right:9px;bottom:9px;width:180px;padding:7px 9px;border-radius:10px;color:#fff;background:#071627c7;font-size:.62rem;backdrop-filter:blur(10px)}
-.radar-legend i{display:block;height:6px;margin-top:5px;border-radius:99px;background:linear-gradient(90deg,#62b9ff,#56e0a5,#ffe16a,#ff7c43,#d53070)}.radar-legend-temperature i{background:linear-gradient(90deg,#405dca,#50c3dd,#f4dc6d,#ef703f,#b8213a)}.radar-legend-wind i{background:repeating-linear-gradient(90deg,#e9f7ff 0 12px,#64b7df 12px 20px)}
+.radar-legend i{display:block;height:6px;margin-top:5px;border-radius:99px;background:linear-gradient(90deg,#62b9ff,#56e0a5,#ffe16a,#ff7c43,#d53070)}.radar-legend-temperature i{background:linear-gradient(90deg,#405dca,#50c3dd,#f4dc6d,#ef703f,#b8213a)}
 .hourly-weather-scroll{height:calc(100% - 96px);overflow:auto hidden;scrollbar-width:thin}.hourly-weather-scroll .weather-detail-grid{width:max-content;min-width:100%;overflow:visible;padding-bottom:8px}.hourly-weather-scroll .weather-detail-grid article{min-width:88px;min-height:150px}
 .temperature-graph{position:relative;min-width:max-content;padding:0 18px 8px}.temperature-graph header{position:sticky;left:18px;z-index:2;width:calc(100vw - 155px);display:flex;align-items:center;justify-content:space-between;margin-bottom:-28px;pointer-events:none}.temperature-graph header>*{pointer-events:auto}.temperature-graph svg{height:210px;overflow:visible}.temperature-graph line{stroke:#ffffff24;stroke-width:1}.temperature-graph text{fill:#ffffff8c;font-size:11px}.temperature-graph .graph-value{fill:#ffffffe0;font-size:10px;text-anchor:middle}.temperature-graph circle{fill:#fff;filter:drop-shadow(0 0 4px #ffffffa6)}.temperature-area{fill:url(#temperature-fill)}.temperature-line{fill:none;stroke:#fff;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 0 5px #dcf1ff73)}
 .daily-detail-list article{padding-left:22px}.daily-detail-list article>strong{padding-left:10px;font-size:1rem;letter-spacing:.01em}
@@ -2109,6 +2109,14 @@ select:focus-visible {
 .graph-mode-switch{display:grid;grid-template-columns:auto 42px auto;gap:8px;align-items:center;min-height:36px;padding:4px 10px;border:1px solid #ffffff26;border-radius:999px;color:#fff;background:#071a2e99;font-size:.72rem;font-weight:700;backdrop-filter:blur(12px)}
 .graph-mode-switch i{position:relative;width:42px;height:22px;border-radius:999px;background:#ffffff24;box-shadow:inset 0 1px 4px #0005}.graph-mode-switch i:after{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 2px 6px #0006;transition:transform .22s ease}.graph-mode-switch.feels-like i:after{transform:translateX(20px)}.graph-mode-switch span{opacity:.55}.graph-mode-switch:not(.feels-like) span:first-child,.graph-mode-switch.feels-like span:last-child{opacity:1}
 .temperature-graph line{stroke-width:.5}.temperature-line{stroke-width:1.5}.temperature-graph text{font-family:inherit}
+.hourly-weather-scroll .weather-detail-grid article.current-hour{position:relative;border:3px solid #fff;box-shadow:0 0 0 2px #6ec8ef99,0 0 22px #65bde67a;transform:translateY(-1px)}
+.hourly-weather-scroll .weather-detail-grid article.current-hour:after{content:"NOW";position:absolute;top:6px;right:6px;padding:2px 5px;border-radius:999px;color:#09233a;background:#dff5ff;font-size:.5rem;font-weight:900;letter-spacing:.06em}
+
+.tropical-weather-page{display:grid;grid-template-rows:auto minmax(0,1fr);overflow:hidden}
+.tropical-toolbar{display:grid;grid-template-columns:minmax(220px,1fr) auto auto;align-items:center;gap:14px;padding:12px 18px;border-bottom:1px solid #ffffff21;background:#102846e8;backdrop-filter:blur(16px)}
+.tropical-toolbar h1{margin:0;font-size:1.35rem}.tropical-toolbar small{color:var(--text-muted)}
+.tropical-browser-controls{display:flex;gap:6px;padding:4px;border-radius:13px;background:#071b30a3}.tropical-browser-controls button{min-width:42px;min-height:38px;padding:4px 11px;border:1px solid #ffffff1c;border-radius:10px;color:#fff;background:#ffffff0d;font-weight:700}.tropical-browser-controls button:active{background:#ffffff2b}
+.tropical-exit{min-height:42px}.tropical-frame{width:100%;height:100%;border:0;background:#fff}
 
 @media(max-width:900px){
   .weather-page{overflow-y:auto;overscroll-behavior:contain}
@@ -2121,6 +2129,9 @@ select:focus-visible {
   .radar-panel{height:58vh;min-height:420px;flex:0 0 auto;margin-top:8px}
   .weather-tab-content{height:auto;min-height:calc(100vh - 145px)}
   .daily-detail-list{overflow:visible}
+  .tropical-toolbar{grid-template-columns:1fr auto;grid-template-rows:auto auto;padding:10px}
+  .tropical-browser-controls{grid-column:1/-1;grid-row:2;justify-content:center}
+  .tropical-exit{grid-column:2;grid-row:1}
 }
 
 @media(max-width:560px){
@@ -2129,12 +2140,15 @@ select:focus-visible {
   .weather-page-header>div:first-child p{max-width:180px;white-space:normal}
   .weather-page-header .weather-hero{grid-column:2;grid-row:1;gap:6px}
   .weather-page-header .weather-hero b{font-size:1.8rem}.weather-page-header .weather-hero strong{font-size:1.5rem}
-  .weather-tabs{grid-column:1/-1;grid-row:2;width:100%;display:grid;grid-template-columns:repeat(3,1fr);overflow:visible}
-  .weather-tabs button{padding:0 6px;font-size:.72rem;white-space:nowrap}
+  .weather-page-header{min-height:164px}
+  .weather-tabs{grid-column:1/-1;grid-row:2;width:100%;display:grid;grid-template-columns:repeat(4,1fr);overflow:visible}
+  .weather-tabs button{min-width:0;padding:0 4px;font-size:.66rem;white-space:normal;line-height:1.05}
   .condition-dashboard{grid-template-columns:1fr}
   .condition-dashboard .condition-card-grid{grid-column:1;grid-template-columns:1fr}
   .weather-tabs{max-width:100%;overflow-x:auto}
   .radar-layer-controls button{padding:4px 8px;font-size:.64rem}
   .alert-preference-grid{grid-template-columns:minmax(110px,1fr) 60px 60px}
   .graph-mode-switch{grid-template-columns:auto 36px auto;gap:5px;padding:4px 7px}
+  .tropical-toolbar{grid-template-columns:1fr;grid-template-rows:auto auto auto}
+  .tropical-toolbar>div:first-child{text-align:center}.tropical-exit{grid-column:1;grid-row:2;width:100%}.tropical-browser-controls{grid-column:1;grid-row:3;flex-wrap:wrap}.tropical-browser-controls button{flex:1}
 }

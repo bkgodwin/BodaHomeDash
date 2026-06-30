@@ -20,13 +20,21 @@ class EventHub:
 
     async def broadcast(self, event: str, payload: Any = None) -> None:
         message = {"event": event, "payload": payload}
-        stale: list[WebSocket] = []
-        for client in list(self.clients):
+        clients = list(self.clients)
+        if not clients:
+            return
+
+        async def send(client: WebSocket) -> WebSocket | None:
             try:
-                await client.send_json(message)
+                await asyncio.wait_for(client.send_json(message), timeout=2)
+                return None
             except Exception:
-                stale.append(client)
+                return client
+
+        stale = await asyncio.gather(*(send(client) for client in clients))
         for client in stale:
+            if client is not None:
+                self.clients.discard(client)
             self.clients.discard(client)
 
     def broadcast_threadsafe(self, event: str, payload: Any = None) -> None:

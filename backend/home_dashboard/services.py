@@ -42,7 +42,12 @@ class DashboardServices:
         self.secrets = secrets
         self.backups = backups
         self.hub = hub
-        self.client = httpx.AsyncClient(follow_redirects=True)
+        self.client = httpx.AsyncClient(
+            follow_redirects=True,
+            timeout=httpx.Timeout(15, connect=8),
+            limits=httpx.Limits(max_connections=16, max_keepalive_connections=8),
+            headers={"User-Agent": "BodaHomeDash/1.0 (household dashboard)"},
+        )
         self.weather = WeatherProvider(self.client)
         self.alerts = NWSAlertProvider(self.client)
         self.barcode_provider = OpenFoodFactsProvider(self.client)

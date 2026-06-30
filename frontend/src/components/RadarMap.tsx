@@ -7,12 +7,11 @@ interface Props {
   isDay?: boolean;
 }
 
-type WeatherLayer = "precipitation" | "temperature" | "wind";
+type WeatherLayer = "precipitation" | "temperature";
 
 const layerLabels: Record<WeatherLayer, string> = {
   precipitation: "Precipitation",
-  temperature: "Temperature",
-  wind: "Wind"
+  temperature: "Temperature"
 };
 
 export function RadarMap({ latitude, longitude, isDay = true }: Props) {
@@ -171,18 +170,6 @@ export function RadarMap({ latitude, longitude, isDay = true }: Props) {
           attribution: "Temperature forecast © NOAA/NWS"
         },
         "Current temperature forecast"
-      );
-    } else {
-      addWms(
-        "/api/v1/weather/map/wind",
-        {
-          layers: "wind",
-          format: "image/png",
-          transparent: true,
-          opacity: 0.9,
-          attribution: "Surface wind observations © NOAA/NWS"
-        },
-        "Surface wind observations · knots"
       );
     }
     return () => {

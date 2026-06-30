@@ -1,4 +1,4 @@
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { api } from "../api";
 import { RadarMap } from "../components/RadarMap";
 import { Weather, WeatherAlert } from "../types";
@@ -37,6 +37,49 @@ function last24HourPrecipitation(weather: Weather): number {
 function formatValue(value: unknown, digits = 0): string {
   const number = Number(value);
   return Number.isFinite(number) ? number.toFixed(digits) : "—";
+}
+
+function TropicalWeatherPanel({ onExit }: { onExit: () => void }) {
+  const frame = useRef<HTMLIFrameElement>(null);
+  const [loading, setLoading] = useState(true);
+  const navigate = (direction: "back" | "forward" | "home" | "reload") => {
+    const browser = frame.current;
+    if (!browser) return;
+    setLoading(true);
+    try {
+      if (direction === "back") browser.contentWindow?.history.back();
+      if (direction === "forward") browser.contentWindow?.history.forward();
+      if (direction === "reload") browser.contentWindow?.location.reload();
+      if (direction === "home") browser.src = "/api/v1/tropical";
+    } catch {
+      browser.src = "/api/v1/tropical";
+    }
+  };
+  return (
+    <main class="page-screen glass tropical-weather-page">
+      <header class="tropical-toolbar">
+        <div>
+          <h1>Tropical Weather</h1>
+          <small>{loading ? "Loading National Hurricane Center…" : "Official National Hurricane Center"}</small>
+        </div>
+        <div class="tropical-browser-controls">
+          <button onClick={() => navigate("back")} aria-label="Back">←</button>
+          <button onClick={() => navigate("forward")} aria-label="Forward">→</button>
+          <button onClick={() => navigate("home")}>NHC Home</button>
+          <button onClick={() => navigate("reload")} aria-label="Reload">↻</button>
+        </div>
+        <button class="button danger tropical-exit" onClick={onExit}>Exit Tropical Weather</button>
+      </header>
+      <iframe
+        ref={frame}
+        class="tropical-frame"
+        src="/api/v1/tropical"
+        title="National Hurricane Center"
+        sandbox="allow-same-origin allow-forms allow-downloads"
+        onLoad={() => setLoading(false)}
+      />
+    </main>
+  );
 }
 
 function WindCompass({
@@ -139,6 +182,8 @@ export function WeatherScreen({
   const [weather, setWeather] = useState<Weather | null>(null);
   const [alerts, setAlerts] = useState<WeatherAlert[]>([]);
   const [tab, setTab] = useState<Tab>("conditions");
+  const [tropicalOpen, setTropicalOpen] = useState(false);
+  const currentHourRef = useRef<HTMLElement>(null);
   useEffect(() => {
     Promise.all([
       api<Weather | null>("/weather"),
@@ -150,6 +195,16 @@ export function WeatherScreen({
       })
       .catch((error) => onToast(error.message));
   }, [refreshToken]);
+  useEffect(() => {
+    if (tab !== "hourly") return;
+    window.requestAnimationFrame(() =>
+      currentHourRef.current?.scrollIntoView({
+        behavior: "smooth",
+        inline: "center",
+        block: "nearest"
+      })
+    );
+  }, [tab, weather?.current?.time]);
   if (!weather)
     return (
       <main class="page-screen glass">
@@ -248,6 +303,17 @@ export function WeatherScreen({
     }
   ];
 
+  if (tropicalOpen) {
+    return (
+      <TropicalWeatherPanel
+        onExit={() => {
+          setTropicalOpen(false);
+          setTab("conditions");
+        }}
+      />
+    );
+  }
+
   return (
     <main class="page-screen glass weather-page">
       <header class="page-header weather-page-header">
@@ -270,6 +336,9 @@ export function WeatherScreen({
               {label}
             </button>
           ))}
+          <button class="tropical-tab" onClick={() => setTropicalOpen(true)}>
+            Tropical Weather
+          </button>
         </div>
         <div class="weather-hero">
           <b>{symbol(Number(current.weather_code))}</b>
@@ -327,8 +396,19 @@ export function WeatherScreen({
             {hourlyIndices.map((index) => {
               const time = String(weather.hourly.time[index]);
               const code = Number(weather.hourly.weather_code[index]);
+              const itemDate = new Date(time);
+              const now = new Date();
+              const isCurrentHour =
+                itemDate.getFullYear() === now.getFullYear() &&
+                itemDate.getMonth() === now.getMonth() &&
+                itemDate.getDate() === now.getDate() &&
+                itemDate.getHours() === now.getHours();
               return (
-                <article style={{ background: weatherGradient(code, { weather, timestamp: time, temperature: weather.hourly.temperature_2m[index], temperatureUnit: weather.units.temperature }) }}>
+                <article
+                  ref={isCurrentHour ? currentHourRef : undefined}
+                  class={isCurrentHour ? "current-hour" : ""}
+                  style={{ background: weatherGradient(code, { weather, timestamp: time, temperature: weather.hourly.temperature_2m[index], temperatureUnit: weather.units.temperature }) }}
+                >
                   <span>{new Date(time).toLocaleTimeString([], { hour: "numeric" })}</span>
                   <b>{symbol(code)}</b>
                   <strong>{roundTemperature(weather.hourly.temperature_2m[index])}{weather.units.temperature}</strong>

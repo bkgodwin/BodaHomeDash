@@ -92,7 +92,7 @@ export function WeatherCanvas({
         context.arc(moonX, moonY, moonRadius, 0, Math.PI * 2);
         context.fill();
         context.shadowBlur = 0;
-        context.globalCompositeOperation = "destination-out";
+        context.fillStyle = "rgba(12,25,48,.92)";
         const waxing = moonPhase < 0.5;
         const phaseOffset = Math.cos(moonPhase * Math.PI * 2) * moonRadius;
         context.beginPath();

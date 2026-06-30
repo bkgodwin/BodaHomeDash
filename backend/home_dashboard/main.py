@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import platform
+import re
 import shutil
 import subprocess
 from contextlib import asynccontextmanager
@@ -161,7 +162,11 @@ async def access_control(request: Request, call_next):
             return JSONResponse({"detail": "Authentication required"}, status_code=401)
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-Frame-Options"] = (
+        "SAMEORIGIN"
+        if path.startswith("/api/v1/tropical")
+        else "DENY"
+    )
     response.headers["Referrer-Policy"] = "no-referrer"
     return response
 
@@ -962,7 +967,7 @@ def active_alerts():
 
 @app.get("/api/v1/weather/map/{layer}")
 async def weather_map_proxy(layer: str, request: Request):
-    if layer not in {"temperature", "wind"}:
+    if layer != "temperature":
         raise HTTPException(status_code=404, detail="Unknown weather map layer")
     query = {key.lower(): value for key, value in request.query_params.items()}
     try:
@@ -976,15 +981,12 @@ async def weather_map_proxy(layer: str, request: Request):
     upstream = (
         "https://mapservices.weather.noaa.gov/raster/services/"
         "NDFD/NDFD_temp/MapServer/WMSServer"
-        if layer == "temperature"
-        else "https://mapservices.weather.noaa.gov/vector/services/"
-        "obs/surface_obs/MapServer/WMSServer"
     )
     params = {
         "service": "WMS",
         "version": "1.1.1",
         "request": "GetMap",
-        "layers": "6" if layer == "temperature" else "5",
+        "layers": "6",
         "styles": "",
         "format": "image/png",
         "transparent": "true",
@@ -994,9 +996,8 @@ async def weather_map_proxy(layer: str, request: Request):
         "height": str(height),
     }
     try:
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-            response = await client.get(upstream, params=params)
-            response.raise_for_status()
+        response = await services.client.get(upstream, params=params, timeout=15)
+        response.raise_for_status()
     except httpx.HTTPError as error:
         raise HTTPException(status_code=502, detail="NOAA map layer unavailable") from error
     if "image" not in response.headers.get("content-type", ""):
@@ -1006,6 +1007,90 @@ async def weather_map_proxy(layer: str, request: Request):
         media_type="image/png",
         headers={"Cache-Control": "public, max-age=300"},
     )
+
+
+def _sanitize_nhc_html(content: str) -> str:
+    content = re.sub(r"<script\b[^>]*>.*?</script\s*>", "", content, flags=re.I | re.S)
+    content = re.sub(r"<base\b[^>]*>", "", content, flags=re.I)
+    content = re.sub(r"<meta\b[^>]*http-equiv\s*=\s*['\"]?refresh['\"]?[^>]*>", "", content, flags=re.I)
+    content = re.sub(
+        r"\s+on[a-z]+\s*=\s*(?:\"[^\"]*\"|'[^']*'|[^\s>]+)",
+        "",
+        content,
+        flags=re.I,
+    )
+    content = re.sub(
+        r"((?:href|src|action)\s*=\s*['\"])/(?!/)",
+        r"\1/api/v1/tropical/",
+        content,
+        flags=re.I,
+    )
+    content = re.sub(
+        r"((?:href|src|action)\s*=\s*['\"])https?://www\.nhc\.noaa\.gov/",
+        r"\1/api/v1/tropical/",
+        content,
+        flags=re.I,
+    )
+    content = re.sub(
+        r"((?:href|src|action)\s*=\s*['\"])//www\.nhc\.noaa\.gov/",
+        r"\1/api/v1/tropical/",
+        content,
+        flags=re.I,
+    )
+    return content
+
+
+@app.get("/api/v1/tropical")
+@app.get("/api/v1/tropical/{path:path}")
+async def tropical_weather_proxy(request: Request, path: str = ""):
+    if ".." in path or "\\" in path or path.startswith("//"):
+        raise HTTPException(status_code=400, detail="Invalid NHC path")
+    upstream = f"https://www.nhc.noaa.gov/{path.lstrip('/')}"
+    try:
+        response = await services.client.get(
+            upstream,
+            params=list(request.query_params.multi_items()),
+            timeout=20,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError as error:
+        logger.warning("NHC proxy request failed for %s: %s", path, error)
+        return Response(
+            content=(
+                "<!doctype html><title>NHC unavailable</title>"
+                "<style>body{font:18px system-ui;padding:3rem;background:#102846;"
+                "color:white}a{color:#8ed8ff}</style>"
+                "<h1>National Hurricane Center temporarily unavailable</h1>"
+                "<p>Check the network connection and try again shortly.</p>"
+                "<a href='/api/v1/tropical'>Try again</a>"
+            ),
+            status_code=502,
+            media_type="text/html",
+        )
+    if response.url.host != "www.nhc.noaa.gov":
+        raise HTTPException(status_code=502, detail="NHC redirected outside its site")
+    if len(response.content) > 25 * 1024 * 1024:
+        raise HTTPException(status_code=502, detail="NHC resource is too large")
+    content_type = response.headers.get("content-type", "application/octet-stream")
+    headers = {
+        "Cache-Control": response.headers.get("cache-control", "public, max-age=60"),
+        "Content-Security-Policy": (
+            "default-src 'self' data: https://www.nhc.noaa.gov; "
+            "script-src 'none'; object-src 'none'; frame-src 'none'; "
+            "style-src 'self' 'unsafe-inline' https://www.nhc.noaa.gov; "
+            "img-src 'self' data: https:; form-action 'self'"
+        ),
+    }
+    if "text/html" in content_type:
+        return Response(
+            content=_sanitize_nhc_html(response.text),
+            media_type="text/html",
+            headers=headers,
+        )
+    if "text/css" in content_type:
+        css = re.sub(r"url\((['\"]?)/", r"url(\1/api/v1/tropical/", response.text)
+        return Response(content=css, media_type="text/css", headers=headers)
+    return Response(content=response.content, media_type=content_type.split(";")[0], headers=headers)
 
 
 @app.post("/api/v1/weather/alerts/{alert_id:path}/dismiss")

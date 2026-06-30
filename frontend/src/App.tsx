@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { api, jsonBody, openEventSocket } from "./api";
 import { Modal } from "./components/Modal";
 import { NumberPad } from "./components/TouchKeyboard";
@@ -61,11 +61,16 @@ export function App() {
   const [scanDestination, setScanDestination] = useState<
     "pantry" | "shopping" | null
   >(null);
+  const toastTimer = useRef<number | null>(null);
   const [scanPromptOpen, setScanPromptOpen] = useState(false);
 
   const showToast = (message: string) => {
     setToast(message);
-    window.setTimeout(() => setToast(""), 3200);
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => {
+      setToast("");
+      toastTimer.current = null;
+    }, 3200);
   };
 
   const loadStatus = () =>
@@ -98,7 +103,10 @@ export function App() {
   useEffect(() => {
     loadStatus();
     const timer = window.setInterval(() => setThemeClock(new Date()), 60_000);
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearInterval(timer);
+      if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    };
   }, []);
 
   useEffect(() => {

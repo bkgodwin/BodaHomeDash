@@ -1,5 +1,7 @@
 from datetime import date, timedelta
 
+from home_dashboard.main import _sanitize_nhc_html
+
 
 def test_status_and_settings(client):
     response = client.get("/api/v1/status")
@@ -13,6 +15,15 @@ def test_status_and_settings(client):
     )
     assert response.status_code == 200
     assert response.json()["household_name"] == "Bayou Home"
+
+
+def test_nhc_html_sanitizer_keeps_navigation_without_scripts():
+    cleaned = _sanitize_nhc_html(
+        '<script>alert(1)</script><a href="/storm.php" onclick="bad()">Storm</a>'
+    )
+    assert "<script" not in cleaned
+    assert "onclick" not in cleaned
+    assert 'href="/api/v1/tropical/storm.php"' in cleaned
 
 
 def test_garbage_pickup_preferences_are_exposed(client):
