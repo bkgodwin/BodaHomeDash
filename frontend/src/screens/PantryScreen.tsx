@@ -56,6 +56,22 @@ export function PantryScreen({ refreshToken, onToast }: Props) {
     );
   }, [products, search, nutritionFilter]);
 
+  const expiringSoon = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const cutoff = new Date(today);
+    cutoff.setDate(cutoff.getDate() + 3);
+    return products.flatMap((product) =>
+      (product.lots || [])
+        .filter((lot) => {
+          if (!lot.expires_on) return false;
+          const expiration = new Date(`${lot.expires_on}T00:00:00`);
+          return expiration >= today && expiration <= cutoff;
+        })
+        .map((lot) => ({ product, lot }))
+    );
+  }, [products]);
+
   const jumpTo = (letter: string) => {
     document
       .getElementById(`pantry-${letter}`)
@@ -134,6 +150,45 @@ export function PantryScreen({ refreshToken, onToast }: Props) {
           + Add product
         </button>
       </header>
+      <section class="expiring-soon-widget">
+        <header>
+          <div>
+            <strong>Use soon</strong>
+            <span>Expiring within three days</span>
+          </div>
+          <b>{expiringSoon.length}</b>
+        </header>
+        <div>
+          {expiringSoon.length === 0 && (
+            <p class="empty">Nothing is expiring in the next three days.</p>
+          )}
+          {expiringSoon.map(({ product, lot }) => (
+            <button
+              onClick={() => {
+                setSelectedLots([]);
+                setSelected(product);
+              }}
+            >
+              {product.image_url ? (
+                <img src={product.image_url} alt="" loading="lazy" />
+              ) : (
+                <i>{product.name[0]}</i>
+              )}
+              <span>
+                <strong>{product.name}</strong>
+                <small>
+                  ×{lot.quantity} ·{" "}
+                  {new Date(`${lot.expires_on}T12:00:00`).toLocaleDateString([], {
+                    weekday: "short",
+                    month: "short",
+                    day: "numeric"
+                  })}
+                </small>
+              </span>
+            </button>
+          ))}
+        </div>
+      </section>
       <div class="pantry-tools">
         <input
           class="search-box"

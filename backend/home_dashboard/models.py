@@ -5,6 +5,21 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+PLANNER_PASTELS = {
+    "#F4A6A6",
+    "#F7C59F",
+    "#F9E79F",
+    "#BFE3B4",
+    "#A8E6CF",
+    "#B8D8D8",
+    "#A7D8F0",
+    "#AFCBFF",
+    "#C3B1E1",
+    "#D7B4F3",
+    "#F5B6D2",
+    "#D3C7B8",
+}
+
 
 class SettingsUpdate(BaseModel):
     values: dict[str, Any]
@@ -106,6 +121,72 @@ class RecipeInput(BaseModel):
         ):
             raise ValueError("Custom recipe image must be JPEG, PNG, or WebP")
         return value
+
+
+class HouseholdMemberInput(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    color: str = Field(default="#A7D8F0", pattern=r"^#[0-9a-fA-F]{6}$")
+
+    @field_validator("name")
+    @classmethod
+    def clean_member_name(cls, value: str) -> str:
+        return " ".join(value.split())
+
+    @field_validator("color")
+    @classmethod
+    def member_color_from_palette(cls, value: str) -> str:
+        if value.upper() not in PLANNER_PASTELS:
+            raise ValueError("Choose a color from the planner palette")
+        return value.upper()
+
+
+class PlannerMealInput(BaseModel):
+    planned_date: date
+    recipe_id: str | None = Field(default=None, max_length=200)
+    title: str = Field(min_length=1, max_length=200)
+    image_url: str = Field(default="", max_length=5_500_000)
+
+    @field_validator("title")
+    @classmethod
+    def clean_meal_title(cls, value: str) -> str:
+        return " ".join(value.split())
+
+
+class PlannerChoreInput(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    color: str = Field(default="#A7D8F0", pattern=r"^#[0-9a-fA-F]{6}$")
+    recurring: bool = True
+    planned_date: date
+    member_ids: list[int] = Field(default_factory=list, max_length=50)
+
+    @field_validator("title")
+    @classmethod
+    def clean_chore_title(cls, value: str) -> str:
+        return " ".join(value.split())
+
+    @field_validator("color")
+    @classmethod
+    def chore_color_from_palette(cls, value: str) -> str:
+        if value.upper() not in PLANNER_PASTELS:
+            raise ValueError("Choose a color from the planner palette")
+        return value.upper()
+
+
+class PlannerChoreMove(BaseModel):
+    planned_date: date
+
+
+class PlannerChoreMembers(BaseModel):
+    member_ids: list[int] = Field(default_factory=list, max_length=50)
+
+
+class PlannerNoteInput(BaseModel):
+    planned_date: date
+    text: str = Field(min_length=1, max_length=1000)
+
+
+class SharedNotepadInput(BaseModel):
+    content_html: str = Field(default="", max_length=200_000)
 
 
 class PinSetup(BaseModel):

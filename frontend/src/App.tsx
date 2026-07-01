@@ -4,6 +4,7 @@ import { Modal } from "./components/Modal";
 import { MobileBarcodeScanner } from "./components/MobileBarcodeScanner";
 import { NumberPad } from "./components/TouchKeyboard";
 import { ProductEntry, ProductSeed } from "./components/ProductEntry";
+import { SharedNotepad } from "./components/SharedNotepad";
 import { WeatherCanvas } from "./components/WeatherCanvas";
 import { HomeScreen } from "./screens/HomeScreen";
 import { PantryScreen } from "./screens/PantryScreen";
@@ -12,6 +13,7 @@ import { RecipesScreen } from "./screens/RecipesScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { ShoppingScreen } from "./screens/ShoppingScreen";
 import { WeatherScreen } from "./screens/WeatherScreen";
+import { WeekPlannerScreen } from "./screens/WeekPlannerScreen";
 import { backgroundAtmosphere, timeOfDayTheme } from "./theme";
 import { onScreenKeyboardEnabled } from "./inputPreferences";
 import { installKioskDragScroll } from "./kioskDragScroll";
@@ -29,6 +31,7 @@ import {
 
 type Screen =
   | "home"
+  | "week"
   | "pantry"
   | "shopping"
   | "reminders"
@@ -40,7 +43,7 @@ export function App() {
   const [status, setStatus] = useState<Status | null>(null);
   const [screen, setScreen] = useState<Screen>(() => {
     const requested = new URLSearchParams(window.location.search).get("screen");
-    return ["home", "pantry", "shopping", "reminders", "recipes", "weather", "settings"].includes(
+    return ["home", "week", "pantry", "shopping", "reminders", "recipes", "weather", "settings"].includes(
       requested || ""
     )
       ? (requested as Screen)
@@ -68,6 +71,8 @@ export function App() {
   const toastTimer = useRef<number | null>(null);
   const [scanPromptOpen, setScanPromptOpen] = useState(false);
   const [cameraScanOpen, setCameraScanOpen] = useState(false);
+  const [notepadOpen, setNotepadOpen] = useState(false);
+  const [recipeToOpen, setRecipeToOpen] = useState<string | null>(null);
   const recipeWakeHeld = useRef(false);
 
   const showToast = (message: string) => {
@@ -133,6 +138,7 @@ export function App() {
           "shopping.updated",
           "reminders.updated",
           "recipes.updated",
+          "planner.updated",
           "timers.updated",
           "settings.updated"
         ].includes(event) ||
@@ -143,6 +149,11 @@ export function App() {
       if (event === "settings.updated") {
         loadStatus();
         loadAtmosphere();
+      }
+      if (event === "notepad.updated") {
+        window.dispatchEvent(
+          new CustomEvent("dashboard:notepad-updated", { detail: payload })
+        );
       }
       if (event === "weather.updated" || event === "alerts.updated") {
         loadAtmosphere();
@@ -306,6 +317,12 @@ export function App() {
           <span>⌂</span> Calendar
         </button>
         <button
+          class={screen === "week" ? "active" : ""}
+          onClick={() => setScreen("week")}
+        >
+          <span>▤</span> Week Planner
+        </button>
+        <button
           class={screen === "pantry" ? "active" : ""}
           onClick={() => setScreen("pantry")}
         >
@@ -376,6 +393,17 @@ export function App() {
                 setCameraScanOpen(true);
               }
             }}
+            onOpenNotepad={() => setNotepadOpen(true)}
+          />
+        )}
+        {screen === "week" && (
+          <WeekPlannerScreen
+            refreshToken={refreshToken}
+            onToast={showToast}
+            onOpenRecipe={(recipeId) => {
+              setRecipeToOpen(recipeId);
+              setScreen("recipes");
+            }}
           />
         )}
         {screen === "pantry" && (
@@ -392,6 +420,8 @@ export function App() {
             refreshToken={refreshToken}
             localDevice={status.local}
             onToast={showToast}
+            openRecipeId={recipeToOpen}
+            onExternalRecipeOpened={() => setRecipeToOpen(null)}
             onViewingChange={async (viewing) => {
               if (!status.local) return;
               try {
@@ -507,6 +537,11 @@ export function App() {
               Dismiss timer
             </button>
           </div>
+        </Modal>
+      )}
+      {notepadOpen && (
+        <Modal title="Shared Notepad" onClose={() => setNotepadOpen(false)} wide>
+          <SharedNotepad onToast={showToast} />
         </Modal>
       )}
 

@@ -177,6 +177,74 @@ CREATE TABLE IF NOT EXISTS recipes (
 CREATE INDEX IF NOT EXISTS idx_recipes_title ON recipes(title);
 CREATE INDEX IF NOT EXISTS idx_recipes_favorite ON recipes(favorite, custom);
 
+CREATE TABLE IF NOT EXISTS household_members (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    color TEXT NOT NULL DEFAULT '#A7D8F0',
+    position INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS planner_meals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    planned_date TEXT NOT NULL,
+    recipe_id TEXT REFERENCES recipes(recipe_id) ON DELETE SET NULL,
+    title TEXT NOT NULL,
+    image_url TEXT NOT NULL DEFAULT '',
+    position INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_planner_meals_date
+    ON planner_meals(planned_date, position);
+
+CREATE TABLE IF NOT EXISTS planner_chores (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    color TEXT NOT NULL DEFAULT '#A7D8F0',
+    recurring INTEGER NOT NULL DEFAULT 1,
+    weekday INTEGER,
+    scheduled_date TEXT,
+    position INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK(
+        (recurring=1 AND weekday BETWEEN 0 AND 6) OR
+        (recurring=0 AND scheduled_date IS NOT NULL)
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_planner_chores_schedule
+    ON planner_chores(recurring, weekday, scheduled_date);
+
+CREATE TABLE IF NOT EXISTS planner_chore_members (
+    chore_id INTEGER NOT NULL REFERENCES planner_chores(id) ON DELETE CASCADE,
+    member_id INTEGER NOT NULL REFERENCES household_members(id) ON DELETE CASCADE,
+    PRIMARY KEY(chore_id, member_id)
+);
+
+CREATE TABLE IF NOT EXISTS planner_chore_completions (
+    chore_id INTEGER NOT NULL REFERENCES planner_chores(id) ON DELETE CASCADE,
+    week_start TEXT NOT NULL,
+    completed_at TEXT NOT NULL,
+    PRIMARY KEY(chore_id, week_start)
+);
+
+CREATE TABLE IF NOT EXISTS planner_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    planned_date TEXT NOT NULL,
+    text TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_planner_notes_date ON planner_notes(planned_date);
+
+CREATE TABLE IF NOT EXISTS shared_notepad (
+    id INTEGER PRIMARY KEY CHECK(id=1),
+    content_html TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS weather_alerts (
     alert_id TEXT PRIMARY KEY,
     event TEXT NOT NULL,
@@ -354,6 +422,17 @@ class Database:
                 connection.execute(
                     "ALTER TABLE reminders "
                     "ADD COLUMN high_priority INTEGER NOT NULL DEFAULT 0"
+                )
+            chore_columns = {
+                row[1]
+                for row in connection.execute(
+                    "PRAGMA table_info(planner_chores)"
+                ).fetchall()
+            }
+            if "color" not in chore_columns:
+                connection.execute(
+                    "ALTER TABLE planner_chores "
+                    "ADD COLUMN color TEXT NOT NULL DEFAULT '#A7D8F0'"
                 )
             now = utcnow()
             connection.executemany(

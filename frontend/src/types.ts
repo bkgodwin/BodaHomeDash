@@ -140,6 +140,50 @@ export interface RecipeIngredient {
   measure: string;
 }
 
+export interface HouseholdMember {
+  id: number;
+  name: string;
+  color: string;
+  position: number;
+}
+
+export interface PlannerMeal {
+  id: number;
+  planned_date: string;
+  recipe_id: string | null;
+  title: string;
+  image_url: string;
+  display_image?: string;
+  position: number;
+}
+
+export interface PlannerChore {
+  id: number;
+  title: string;
+  color: string;
+  recurring: number;
+  weekday: number | null;
+  scheduled_date: string | null;
+  planned_date: string;
+  completed: boolean;
+  completed_at: string | null;
+  members: HouseholdMember[];
+}
+
+export interface PlannerNote {
+  id: number;
+  planned_date: string;
+  text: string;
+}
+
+export interface PlannerWeek {
+  start: string;
+  end: string;
+  meals: PlannerMeal[];
+  chores: PlannerChore[];
+  notes: PlannerNote[];
+}
+
 export interface Recipe {
   recipe_id: string;
   source: "themealdb" | "custom";

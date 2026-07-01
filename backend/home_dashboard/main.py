@@ -45,11 +45,17 @@ from .models import (
     CalendarConnect,
     CalendarSelection,
     HardwareTest,
+    HouseholdMemberInput,
     LoginRequest,
     LotUpdate,
     LotDeleteMany,
     PantryAdd,
     PinSetup,
+    PlannerChoreInput,
+    PlannerChoreMembers,
+    PlannerChoreMove,
+    PlannerMealInput,
+    PlannerNoteInput,
     ReminderCreate,
     ReminderReorder,
     ReminderUpdate,
@@ -57,6 +63,7 @@ from .models import (
     SettingsUpdate,
     ShoppingCreate,
     ShoppingUpdate,
+    SharedNotepadInput,
     TimerCreate,
     WifiConnect,
 )
@@ -375,6 +382,339 @@ def calendar_range(
         "holidays": holiday_items,
         "expirations": expirations,
     }
+
+
+def _week_start(value: date) -> date:
+    return value - timedelta(days=value.weekday())
+
+
+def _planner_chore(chore: dict[str, Any], week: date) -> dict[str, Any]:
+    planned = (
+        week + timedelta(days=int(chore["weekday"]))
+        if chore["recurring"]
+        else date.fromisoformat(chore["scheduled_date"])
+    )
+    members = database.all(
+        """SELECT hm.* FROM household_members hm
+           JOIN planner_chore_members pcm ON pcm.member_id=hm.id
+           WHERE pcm.chore_id=? ORDER BY hm.position,hm.name COLLATE NOCASE""",
+        (chore["id"],),
+    )
+    completion = database.one(
+        """SELECT completed_at FROM planner_chore_completions
+           WHERE chore_id=? AND week_start=?""",
+        (chore["id"], week.isoformat()),
+    )
+    return {
+        **chore,
+        "planned_date": planned.isoformat(),
+        "members": members,
+        "completed": completion is not None,
+        "completed_at": completion["completed_at"] if completion else None,
+    }
+
+
+@app.get("/api/v1/household/members")
+def household_members():
+    return database.all(
+        "SELECT * FROM household_members ORDER BY position,name COLLATE NOCASE"
+    )
+
+
+@app.post("/api/v1/household/members")
+async def create_household_member(payload: HouseholdMemberInput):
+    now = utcnow()
+    position = database.one(
+        "SELECT COALESCE(MAX(position),-1)+1 AS next FROM household_members"
+    )["next"]
+    cursor = database.execute(
+        """INSERT INTO household_members(name,color,position,created_at,updated_at)
+           VALUES(?,?,?,?,?)""",
+        (payload.name, payload.color, position, now, now),
+    )
+    await hub.broadcast("planner.updated", {"scope": "members"})
+    return database.one(
+        "SELECT * FROM household_members WHERE id=?", (cursor.lastrowid,)
+    )
+
+
+@app.put("/api/v1/household/members/{member_id}")
+async def update_household_member(member_id: int, payload: HouseholdMemberInput):
+    changed = database.execute(
+        """UPDATE household_members SET name=?,color=?,updated_at=? WHERE id=?""",
+        (payload.name, payload.color, utcnow(), member_id),
+    ).rowcount
+    if not changed:
+        raise HTTPException(status_code=404, detail="Household member not found")
+    await hub.broadcast("planner.updated", {"scope": "members"})
+    return database.one("SELECT * FROM household_members WHERE id=?", (member_id,))
+
+
+@app.delete("/api/v1/household/members/{member_id}", status_code=204)
+async def delete_household_member(member_id: int):
+    changed = database.execute(
+        "DELETE FROM household_members WHERE id=?", (member_id,)
+    ).rowcount
+    if not changed:
+        raise HTTPException(status_code=404, detail="Household member not found")
+    await hub.broadcast("planner.updated", {"scope": "members"})
+    return Response(status_code=204)
+
+
+@app.get("/api/v1/planner/week")
+def planner_week(start: date = Query(...)):
+    week = _week_start(start)
+    end = week + timedelta(days=7)
+    current_week = _week_start(date.today())
+    database.execute(
+        """DELETE FROM planner_chores
+           WHERE recurring=0 AND scheduled_date<?""",
+        (current_week.isoformat(),),
+    )
+    meals = database.all(
+        """SELECT pm.*,
+                  COALESCE(NULLIF(r.image_data,''),NULLIF(r.image_url,''),pm.image_url)
+                    AS display_image
+           FROM planner_meals pm
+           LEFT JOIN recipes r ON r.recipe_id=pm.recipe_id
+           WHERE pm.planned_date>=? AND pm.planned_date<?
+           ORDER BY pm.planned_date,pm.position,pm.id""",
+        (week.isoformat(), end.isoformat()),
+    )
+    chore_rows = database.all(
+        """SELECT * FROM planner_chores
+           WHERE (recurring=1 AND substr(created_at,1,10)<?)
+              OR (scheduled_date>=? AND scheduled_date<?)
+           ORDER BY position,id""",
+        (end.isoformat(), week.isoformat(), end.isoformat()),
+    )
+    chores = [_planner_chore(chore, week) for chore in chore_rows]
+    notes = database.all(
+        """SELECT * FROM planner_notes
+           WHERE planned_date>=? AND planned_date<?
+           ORDER BY planned_date,id""",
+        (week.isoformat(), end.isoformat()),
+    )
+    return {
+        "start": week.isoformat(),
+        "end": end.isoformat(),
+        "meals": meals,
+        "chores": chores,
+        "notes": notes,
+    }
+
+
+@app.post("/api/v1/planner/meals")
+async def create_planner_meal(payload: PlannerMealInput):
+    if payload.recipe_id and not database.one(
+        "SELECT recipe_id FROM recipes WHERE recipe_id=?", (payload.recipe_id,)
+    ):
+        raise HTTPException(status_code=404, detail="Recipe is not cached")
+    position = database.one(
+        """SELECT COALESCE(MAX(position),-1)+1 AS next FROM planner_meals
+           WHERE planned_date=?""",
+        (payload.planned_date.isoformat(),),
+    )["next"]
+    now = utcnow()
+    cursor = database.execute(
+        """INSERT INTO planner_meals(
+               planned_date,recipe_id,title,image_url,position,created_at,updated_at
+           ) VALUES(?,?,?,?,?,?,?)""",
+        (
+            payload.planned_date.isoformat(),
+            payload.recipe_id,
+            payload.title,
+            payload.image_url,
+            position,
+            now,
+            now,
+        ),
+    )
+    await hub.broadcast("planner.updated", {"scope": "meals"})
+    return database.one("SELECT * FROM planner_meals WHERE id=?", (cursor.lastrowid,))
+
+
+@app.delete("/api/v1/planner/meals/{meal_id}", status_code=204)
+async def delete_planner_meal(meal_id: int):
+    if not database.execute("DELETE FROM planner_meals WHERE id=?", (meal_id,)).rowcount:
+        raise HTTPException(status_code=404, detail="Planned meal not found")
+    await hub.broadcast("planner.updated", {"scope": "meals"})
+    return Response(status_code=204)
+
+
+@app.post("/api/v1/planner/chores")
+async def create_planner_chore(payload: PlannerChoreInput):
+    member_ids = sorted(set(payload.member_ids))
+    if member_ids:
+        placeholders = ",".join("?" for _ in member_ids)
+        found = database.one(
+            f"SELECT COUNT(*) AS count FROM household_members WHERE id IN ({placeholders})",
+            tuple(member_ids),
+        )["count"]
+        if found != len(member_ids):
+            raise HTTPException(status_code=400, detail="Unknown household member")
+    position = database.one(
+        "SELECT COALESCE(MAX(position),-1)+1 AS next FROM planner_chores"
+    )["next"]
+    now = utcnow()
+    with database.transaction() as connection:
+        cursor = connection.execute(
+            """INSERT INTO planner_chores(
+                   title,color,recurring,weekday,scheduled_date,position,created_at,updated_at
+               ) VALUES(?,?,?,?,?,?,?,?)""",
+            (
+                payload.title,
+                payload.color,
+                int(payload.recurring),
+                payload.planned_date.weekday() if payload.recurring else None,
+                None if payload.recurring else payload.planned_date.isoformat(),
+                position,
+                now,
+                now,
+            ),
+        )
+        connection.executemany(
+            "INSERT INTO planner_chore_members(chore_id,member_id) VALUES(?,?)",
+            [(cursor.lastrowid, member_id) for member_id in member_ids],
+        )
+    week = _week_start(payload.planned_date)
+    await hub.broadcast("planner.updated", {"scope": "chores"})
+    chore = database.one("SELECT * FROM planner_chores WHERE id=?", (cursor.lastrowid,))
+    assert chore is not None
+    return _planner_chore(chore, week)
+
+
+@app.put("/api/v1/planner/chores/{chore_id}/move")
+async def move_planner_chore(chore_id: int, payload: PlannerChoreMove):
+    chore = database.one("SELECT * FROM planner_chores WHERE id=?", (chore_id,))
+    if not chore:
+        raise HTTPException(status_code=404, detail="Chore not found")
+    if chore["recurring"]:
+        database.execute(
+            "UPDATE planner_chores SET weekday=?,updated_at=? WHERE id=?",
+            (payload.planned_date.weekday(), utcnow(), chore_id),
+        )
+    else:
+        database.execute(
+            "UPDATE planner_chores SET scheduled_date=?,updated_at=? WHERE id=?",
+            (payload.planned_date.isoformat(), utcnow(), chore_id),
+        )
+    await hub.broadcast("planner.updated", {"scope": "chores"})
+    updated = database.one("SELECT * FROM planner_chores WHERE id=?", (chore_id,))
+    assert updated is not None
+    return _planner_chore(updated, _week_start(payload.planned_date))
+
+
+@app.put("/api/v1/planner/chores/{chore_id}/members")
+async def set_planner_chore_members(
+    chore_id: int, payload: PlannerChoreMembers
+):
+    chore = database.one("SELECT * FROM planner_chores WHERE id=?", (chore_id,))
+    if not chore:
+        raise HTTPException(status_code=404, detail="Chore not found")
+    member_ids = sorted(set(payload.member_ids))
+    if member_ids:
+        placeholders = ",".join("?" for _ in member_ids)
+        found = database.one(
+            f"SELECT COUNT(*) AS count FROM household_members WHERE id IN ({placeholders})",
+            tuple(member_ids),
+        )["count"]
+        if found != len(member_ids):
+            raise HTTPException(status_code=400, detail="Unknown household member")
+    with database.transaction() as connection:
+        connection.execute(
+            "DELETE FROM planner_chore_members WHERE chore_id=?", (chore_id,)
+        )
+        connection.executemany(
+            "INSERT INTO planner_chore_members(chore_id,member_id) VALUES(?,?)",
+            [(chore_id, member_id) for member_id in member_ids],
+        )
+    await hub.broadcast("planner.updated", {"scope": "chores"})
+    return {"chore_id": chore_id, "member_ids": member_ids}
+
+
+@app.put("/api/v1/planner/chores/{chore_id}/complete")
+async def complete_planner_chore(
+    chore_id: int,
+    week_start: date,
+    completed: bool = True,
+):
+    if not database.one("SELECT id FROM planner_chores WHERE id=?", (chore_id,)):
+        raise HTTPException(status_code=404, detail="Chore not found")
+    week = _week_start(week_start).isoformat()
+    if completed:
+        database.execute(
+            """INSERT INTO planner_chore_completions(
+                   chore_id,week_start,completed_at
+               ) VALUES(?,?,?)
+               ON CONFLICT(chore_id,week_start) DO UPDATE SET
+                   completed_at=excluded.completed_at""",
+            (chore_id, week, utcnow()),
+        )
+    else:
+        database.execute(
+            """DELETE FROM planner_chore_completions
+               WHERE chore_id=? AND week_start=?""",
+            (chore_id, week),
+        )
+    await hub.broadcast("planner.updated", {"scope": "chores"})
+    return {"chore_id": chore_id, "week_start": week, "completed": completed}
+
+
+@app.delete("/api/v1/planner/chores/{chore_id}", status_code=204)
+async def delete_planner_chore(chore_id: int):
+    if not database.execute(
+        "DELETE FROM planner_chores WHERE id=?", (chore_id,)
+    ).rowcount:
+        raise HTTPException(status_code=404, detail="Chore not found")
+    await hub.broadcast("planner.updated", {"scope": "chores"})
+    return Response(status_code=204)
+
+
+@app.post("/api/v1/planner/notes")
+async def create_planner_note(payload: PlannerNoteInput):
+    now = utcnow()
+    cursor = database.execute(
+        """INSERT INTO planner_notes(planned_date,text,created_at,updated_at)
+           VALUES(?,?,?,?)""",
+        (payload.planned_date.isoformat(), payload.text, now, now),
+    )
+    await hub.broadcast("planner.updated", {"scope": "notes"})
+    return database.one("SELECT * FROM planner_notes WHERE id=?", (cursor.lastrowid,))
+
+
+@app.delete("/api/v1/planner/notes/{note_id}", status_code=204)
+async def delete_planner_note(note_id: int):
+    if not database.execute("DELETE FROM planner_notes WHERE id=?", (note_id,)).rowcount:
+        raise HTTPException(status_code=404, detail="Planner note not found")
+    await hub.broadcast("planner.updated", {"scope": "notes"})
+    return Response(status_code=204)
+
+
+@app.get("/api/v1/notepad")
+def shared_notepad():
+    row = database.one("SELECT * FROM shared_notepad WHERE id=1")
+    return row or {"id": 1, "content_html": "", "updated_at": None}
+
+
+@app.put("/api/v1/notepad")
+async def update_shared_notepad(payload: SharedNotepadInput):
+    content = re.sub(
+        r"<(script|style)\b[^>]*>.*?</\1>",
+        "",
+        payload.content_html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    now = utcnow()
+    database.execute(
+        """INSERT INTO shared_notepad(id,content_html,updated_at) VALUES(1,?,?)
+           ON CONFLICT(id) DO UPDATE SET
+               content_html=excluded.content_html,
+               updated_at=excluded.updated_at""",
+        (content, now),
+    )
+    await hub.broadcast("notepad.updated", {"updated_at": now})
+    return {"id": 1, "content_html": content, "updated_at": now}
 
 
 @app.post("/api/v1/calendar/connect")

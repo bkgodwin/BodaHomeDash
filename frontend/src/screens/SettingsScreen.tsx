@@ -2,10 +2,13 @@ import { useEffect, useState } from "preact/hooks";
 import { api, jsonBody } from "../api";
 import { TouchInput } from "../components/TouchInput";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { Modal } from "../components/Modal";
 import {
   BarcodeScanEvent,
   scannerTestMode
 } from "../scannerCapture";
+import { HouseholdMember } from "../types";
+import { PLANNER_PASTELS } from "../plannerPalette";
 
 interface Props {
   onToast: (message: string) => void;
@@ -49,14 +52,31 @@ export function SettingsScreen({
   const [metrics, setMetrics] = useState<any>(null);
   const [updateStatus, setUpdateStatus] = useState<any>(null);
   const [exitDesktopConfirm, setExitDesktopConfirm] = useState(false);
+  const [householdMembers, setHouseholdMembers] = useState<HouseholdMember[]>([]);
+  const [memberName, setMemberName] = useState("");
+  const [memberColor, setMemberColor] = useState<string>(PLANNER_PASTELS[6]);
+  const [deleteMember, setDeleteMember] = useState<HouseholdMember | null>(null);
+  const [editMember, setEditMember] = useState<HouseholdMember | null>(null);
+  const [editMemberName, setEditMemberName] = useState("");
+  const [editMemberColor, setEditMemberColor] = useState<string>(
+    PLANNER_PASTELS[6]
+  );
 
   const load = async () => {
-    const [values, calendarValues, deviceValues, syncValues, interfaceValues] = await Promise.all([
+    const [
+      values,
+      calendarValues,
+      deviceValues,
+      syncValues,
+      interfaceValues,
+      memberValues
+    ] = await Promise.all([
       api<Settings>("/settings"),
       api<any[]>("/calendar/calendars"),
       api<any>("/hardware/devices"),
       api<any>("/sync/status"),
-      api<any>("/network/interfaces")
+      api<any>("/network/interfaces"),
+      api<HouseholdMember[]>("/household/members")
     ]);
     setSettings(values);
     setCalendars(calendarValues);
@@ -65,6 +85,7 @@ export function SettingsScreen({
     setInterfaces(interfaceValues.interfaces || []);
     setNetworkInfo(interfaceValues);
     setMotionStatus(deviceValues.motion_status || null);
+    setHouseholdMembers(memberValues);
     api<any>("/system/metrics").then(setMetrics).catch(() => undefined);
     api<any>("/system/update/status").then(setUpdateStatus).catch(() => undefined);
   };
@@ -195,6 +216,7 @@ export function SettingsScreen({
         "calendar",
         "weather",
         "hardware",
+        "household",
         "network",
         "security",
         "backup",
@@ -1022,6 +1044,87 @@ export function SettingsScreen({
           </>
         )}
 
+        {tab === "household" && (
+          <SettingsCard title="Household members">
+            <p>
+              These names are used for Week Planner chore assignments. Hold and
+              drag a member chip onto a chore to assign it.
+            </p>
+            <div class="household-member-form">
+              <TouchInput
+                label="Member name"
+                value={memberName}
+                onChange={setMemberName}
+                placeholder="Name"
+              />
+              <button
+                class="button primary"
+                disabled={!memberName.trim()}
+                onClick={async () => {
+                  try {
+                    const created = await api<HouseholdMember>(
+                      "/household/members",
+                      {
+                        method: "POST",
+                        ...jsonBody({ name: memberName, color: memberColor })
+                      }
+                    );
+                    setHouseholdMembers([...householdMembers, created]);
+                    setMemberName("");
+                    onToast(`${created.name} added`);
+                  } catch (error: any) {
+                    onToast(error.message);
+                  }
+                }}
+              >
+                Add member
+              </button>
+              <fieldset class="pastel-picker member-pastel-picker">
+                <legend>Color</legend>
+                {PLANNER_PASTELS.map((color) => (
+                  <button
+                    type="button"
+                    class={memberColor === color ? "active" : ""}
+                    style={{ "--swatch": color }}
+                    aria-label={`Choose ${color}`}
+                    aria-pressed={memberColor === color}
+                    onClick={() => setMemberColor(color)}
+                  />
+                ))}
+              </fieldset>
+            </div>
+            <div class="household-member-list">
+              {householdMembers.length === 0 && (
+                <p class="empty">No household members yet.</p>
+              )}
+              {householdMembers.map((member) => (
+                <article>
+                  <i style={{ background: member.color }} />
+                  <strong>{member.name}</strong>
+                  <div>
+                    <button
+                      class="button secondary"
+                      onClick={() => {
+                        setEditMember(member);
+                        setEditMemberName(member.name);
+                        setEditMemberColor(member.color);
+                      }}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      class="button danger"
+                      onClick={() => setDeleteMember(member)}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </SettingsCard>
+        )}
+
         {tab === "network" && (
           <>
           <SettingsCard title="Mobile Dash address">
@@ -1347,6 +1450,72 @@ export function SettingsScreen({
           </SettingsCard>
         )}
       </div>
+      {deleteMember && (
+        <ConfirmDialog
+          title="Remove household member?"
+          message={`Remove ${deleteMember.name}? Their chore assignments will also be removed.`}
+          confirmLabel="Remove member"
+          cancelLabel="Keep member"
+          onCancel={() => setDeleteMember(null)}
+          onConfirm={async () => {
+            await api(`/household/members/${deleteMember.id}`, {
+              method: "DELETE"
+            });
+            setHouseholdMembers(
+              householdMembers.filter((member) => member.id !== deleteMember.id)
+            );
+            setDeleteMember(null);
+          }}
+        />
+      )}
+      {editMember && (
+        <Modal title="Edit household member" onClose={() => setEditMember(null)} wide>
+          <div class="household-member-editor">
+            <TouchInput
+              label="Member name"
+              value={editMemberName}
+              onChange={setEditMemberName}
+            />
+            <fieldset class="pastel-picker">
+              <legend>Color</legend>
+              {PLANNER_PASTELS.map((color) => (
+                <button
+                  type="button"
+                  class={editMemberColor === color ? "active" : ""}
+                  style={{ "--swatch": color }}
+                  aria-label={`Choose ${color}`}
+                  aria-pressed={editMemberColor === color}
+                  onClick={() => setEditMemberColor(color)}
+                />
+              ))}
+            </fieldset>
+            <button
+              class="button primary full-width"
+              disabled={!editMemberName.trim()}
+              onClick={async () => {
+                const updated = await api<HouseholdMember>(
+                  `/household/members/${editMember.id}`,
+                  {
+                    method: "PUT",
+                    ...jsonBody({
+                      name: editMemberName,
+                      color: editMemberColor
+                    })
+                  }
+                );
+                setHouseholdMembers(
+                  householdMembers.map((member) =>
+                    member.id === updated.id ? updated : member
+                  )
+                );
+                setEditMember(null);
+              }}
+            >
+              Save member
+            </button>
+          </div>
+        </Modal>
+      )}
       {exitDesktopConfirm && (
         <ConfirmDialog
           title="Exit to Raspberry Pi desktop?"

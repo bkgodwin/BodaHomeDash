@@ -206,6 +206,71 @@ def test_pi_diagnostic_shapes(client):
     assert network["restart_required"] is False
 
 
+def test_week_planner_household_and_notepad(client):
+    member = client.post(
+        "/api/v1/household/members",
+        json={"name": "Planner Tester", "color": "#A7D8F0"},
+    )
+    assert member.status_code == 200
+    member_id = member.json()["id"]
+    meal = client.post(
+        "/api/v1/planner/meals",
+        json={
+            "planned_date": "2031-01-07",
+            "title": "Order pizza",
+            "recipe_id": None,
+        },
+    )
+    assert meal.status_code == 200
+    chore = client.post(
+        "/api/v1/planner/chores",
+        json={
+            "title": "Test weekly chore",
+            "recurring": True,
+            "planned_date": "2031-01-07",
+            "member_ids": [member_id],
+        },
+    )
+    assert chore.status_code == 200
+    chore_id = chore.json()["id"]
+    assert chore.json()["color"] == "#A7D8F0"
+    note = client.post(
+        "/api/v1/planner/notes",
+        json={"planned_date": "2031-01-07", "text": "Planner test note"},
+    )
+    assert note.status_code == 200
+
+    week = client.get("/api/v1/planner/week?start=2031-01-06")
+    assert week.status_code == 200
+    payload = week.json()
+    assert payload["meals"][0]["title"] == "Order pizza"
+    assert payload["chores"][0]["members"][0]["id"] == member_id
+    assert payload["notes"][0]["text"] == "Planner test note"
+
+    completed = client.put(
+        f"/api/v1/planner/chores/{chore_id}/complete"
+        "?week_start=2031-01-06&completed=true"
+    )
+    assert completed.json()["completed"] is True
+    moved = client.put(
+        f"/api/v1/planner/chores/{chore_id}/move",
+        json={"planned_date": "2031-01-09"},
+    )
+    assert moved.json()["planned_date"] == "2031-01-09"
+
+    saved = client.put(
+        "/api/v1/notepad",
+        json={"content_html": "## Test\n**Shared** note"},
+    )
+    assert saved.status_code == 200
+    assert client.get("/api/v1/notepad").json()["content_html"].startswith("## Test")
+
+    assert client.delete(f"/api/v1/planner/meals/{meal.json()['id']}").status_code == 204
+    assert client.delete(f"/api/v1/planner/notes/{note.json()['id']}").status_code == 204
+    assert client.delete(f"/api/v1/planner/chores/{chore_id}").status_code == 204
+    assert client.delete(f"/api/v1/household/members/{member_id}").status_code == 204
+
+
 def test_fifo_consume_batch_notes_and_selected_batch_delete(client):
     first = client.post(
         "/api/v1/pantry",

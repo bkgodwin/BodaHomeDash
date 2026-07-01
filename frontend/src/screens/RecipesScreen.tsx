@@ -10,13 +10,17 @@ interface Props {
   localDevice: boolean;
   onToast: (message: string) => void;
   onViewingChange: (viewing: boolean) => void;
+  openRecipeId?: string | null;
+  onExternalRecipeOpened?: () => void;
 }
 
 export function RecipesScreen({
   refreshToken,
   localDevice,
   onToast,
-  onViewingChange
+  onViewingChange,
+  openRecipeId,
+  onExternalRecipeOpened
 }: Props) {
   const [query, setQuery] = useState("");
   const [searchMode, setSearchMode] = useState<"name" | "ingredient">("name");
@@ -73,6 +77,19 @@ export function RecipesScreen({
       onToast(error.message);
     }
   };
+
+  useEffect(() => {
+    if (!openRecipeId) return;
+    api<Recipe>(`/recipes/${encodeURIComponent(openRecipeId)}`)
+      .then((detail) => {
+        setSelected(detail);
+        onExternalRecipeOpened?.();
+      })
+      .catch((error) => {
+        onToast(error.message);
+        onExternalRecipeOpened?.();
+      });
+  }, [openRecipeId]);
 
   const favorite = async (recipe: Recipe) => {
     try {

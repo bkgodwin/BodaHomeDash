@@ -35,6 +35,7 @@ interface Props {
   mobileDashAddress: string;
   onToggleAwakeLock: () => void;
   onScanNow: () => void;
+  onOpenNotepad: () => void;
 }
 
 function keyForDate(value: Date): string {
@@ -102,7 +103,8 @@ export function HomeScreen({
   localDevice,
   mobileDashAddress,
   onToggleAwakeLock,
-  onScanNow
+  onScanNow,
+  onOpenNotepad
 }: Props) {
   const [month, setMonth] = useState(
     () => new Date(new Date().getFullYear(), new Date().getMonth(), 1)
@@ -534,6 +536,14 @@ export function HomeScreen({
           title="Scan a barcode"
         >
           ▥
+        </button>
+        <button
+          class="notepad-button"
+          onClick={onOpenNotepad}
+          aria-label="Open shared notepad"
+          title="Shared notepad"
+        >
+          📝
         </button>
         {localDevice && (
           <button

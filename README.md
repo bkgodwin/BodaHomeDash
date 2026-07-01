@@ -22,6 +22,11 @@ The current implementation includes:
 - phone-camera barcode scanning with ZXing and a photo fallback;
 - searchable TheMealDB recipes, locally cached favorites, editable custom
   recipes, and one-tap ingredient additions to the shopping list;
+- a horizontally scrolling Week Planner with calendar/weather context, recipe
+  meals, meal labels, color-coded recurring or one-time chores, household
+  assignments, hold-to-drag scheduling, and daily notes;
+- a shared autosaving formatted notepad on kiosk and phone layouts;
+- a three-day pantry “use soon” strip;
 - optional encrypted USB backups restorable during a fresh setup;
 - an optional garbage-pickup-day reminder beside the clock;
 - a touch-first setup wizard, optional full on-screen keyboard, physical
@@ -31,7 +36,7 @@ The current implementation includes:
 
 The Windows development build supports keyboard-wedge barcode scanners and
 audio through the Windows sound system. Raspberry Pi deployments use evdev for
-the selected scanner and ALSA for HDMI audio.
+the selected scanner and PipeWire with an ALSA fallback for HDMI audio.
 
 ## Hardware target
 
