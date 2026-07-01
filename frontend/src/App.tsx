@@ -6,6 +6,7 @@ import { NumberPad } from "./components/TouchKeyboard";
 import { ProductEntry, ProductSeed } from "./components/ProductEntry";
 import { SharedNotepad } from "./components/SharedNotepad";
 import { WeatherCanvas } from "./components/WeatherCanvas";
+import { WeatherIcon } from "./components/WeatherIcon";
 import { HomeScreen } from "./screens/HomeScreen";
 import { PantryScreen } from "./screens/PantryScreen";
 import { RemindersScreen } from "./screens/RemindersScreen";
@@ -444,7 +445,7 @@ export function App() {
           class={screen === "weather" ? "active" : ""}
           onClick={() => setScreen("weather")}
         >
-          <span>☀</span> Weather
+          <span><WeatherIcon code={0} /></span> Weather
         </button>
         {status.local && (
           <button

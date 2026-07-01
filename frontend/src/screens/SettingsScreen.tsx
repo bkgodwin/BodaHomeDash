@@ -45,6 +45,7 @@ export function SettingsScreen({
   const [interfaces, setInterfaces] = useState<any[]>([]);
   const [networkInfo, setNetworkInfo] = useState<any>(null);
   const [motionStatus, setMotionStatus] = useState<any>(null);
+  const [systemVolume, setSystemVolume] = useState(50);
   const [wifiPassword, setWifiPassword] = useState("");
   const [selectedSsid, setSelectedSsid] = useState("");
   const [busy, setBusy] = useState(false);
@@ -89,6 +90,12 @@ export function SettingsScreen({
     setInterfaces(interfaceValues.interfaces || []);
     setNetworkInfo(interfaceValues);
     setMotionStatus(deviceValues.motion_status || null);
+    if (
+      deviceValues.system_volume?.volume != null &&
+      Number.isFinite(Number(deviceValues.system_volume.volume))
+    ) {
+      setSystemVolume(Number(deviceValues.system_volume.volume));
+    }
     setHouseholdMembers(memberValues);
     api<any>("/system/metrics").then(setMetrics).catch(() => undefined);
     api<any>("/system/update/status").then(setUpdateStatus).catch(() => undefined);
@@ -175,6 +182,23 @@ export function SettingsScreen({
           ? `Sound played through ${result.backend}`
           : `Audio failed: ${result.last_error || "unknown playback error"}`
       );
+    } catch (error: any) {
+      onToast(error.message);
+    }
+  };
+
+  const updateSystemVolume = async (value: number) => {
+    const next = Math.max(0, Math.min(100, Math.round(value)));
+    setSystemVolume(next);
+    try {
+      const result = await api<any>(
+        `/hardware/system-volume?volume=${next}`,
+        { method: "PUT" }
+      );
+      setDevices((current: any) => ({
+        ...current,
+        system_volume: result
+      }));
     } catch (error: any) {
       onToast(error.message);
     }
@@ -829,21 +853,15 @@ export function SettingsScreen({
                   setSettings({ ...settings, motion_active_high: value })
                 }
               />
-              <label class="setting-number">
-                <span>BCM GPIO pin</span>
-                <input
-                  type="number"
-                  min="2"
-                  max="27"
-                  value={settings.motion_gpio_bcm}
-                  onChange={(event) =>
-                    setSettings({
-                      ...settings,
-                      motion_gpio_bcm: Number(event.currentTarget.value)
-                    })
-                  }
-                />
-              </label>
+              <SettingStepper
+                label="BCM GPIO pin"
+                value={Number(settings.motion_gpio_bcm)}
+                min={2}
+                max={27}
+                onChange={(value) =>
+                  setSettings({ ...settings, motion_gpio_bcm: value })
+                }
+              />
               <label class="setting-select">
                 <span>Sleep method</span>
                 <select
@@ -859,22 +877,19 @@ export function SettingsScreen({
                   <option value="blank">Blank screen</option>
                 </select>
               </label>
-              <label class="setting-number">
-                <span>Sleep after minutes</span>
-                <input
-                  type="number"
-                  min="1"
-                  max="120"
-                  value={Math.round(settings.motion_timeout_seconds / 60)}
-                  onChange={(event) =>
-                    setSettings({
-                      ...settings,
-                      motion_timeout_seconds:
-                        Number(event.currentTarget.value) * 60
-                    })
-                  }
-                />
-              </label>
+              <SettingStepper
+                label="Sleep after"
+                value={Math.round(settings.motion_timeout_seconds / 60)}
+                min={1}
+                max={120}
+                suffix="minutes"
+                onChange={(value) =>
+                  setSettings({
+                    ...settings,
+                    motion_timeout_seconds: value * 60
+                  })
+                }
+              />
               <div class="button-row">
                 <button
                   class="button secondary"
@@ -889,7 +904,7 @@ export function SettingsScreen({
                     }));
                     onToast(
                       result.success
-                        ? "Display test started — touch the screen or wait 15 seconds"
+                        ? "Display test started — PIR is ignored for 5 seconds"
                         : `Display test failed: ${result.last_error || "display output unavailable"}`
                     );
                   }}
@@ -911,7 +926,9 @@ export function SettingsScreen({
               <p class="hint display-test-safety">
                 During this test, touch the screen, press a key, scan a barcode,
                 or trigger the PIR sensor to wake the display. It will also turn
-                itself back on automatically after 15 seconds.
+                itself back on automatically after 15 seconds. PIR input is
+                intentionally ignored for the first 5 seconds so you can confirm
+                that the display actually turned off.
               </p>
               {devices.display_status?.last_error && (
                 <p class="hardware-test-result error">
@@ -1006,6 +1023,50 @@ export function SettingsScreen({
                 back to ALSA. Connect and power the HDMI monitor before scanning,
                 then save before testing sound.
               </p>
+              <div class="system-volume-control">
+                <div>
+                  <strong>Raspberry Pi system volume</strong>
+                  <span>{systemVolume}%</span>
+                </div>
+                <div>
+                  <button
+                    type="button"
+                    disabled={!devices.system_volume?.available}
+                    onClick={() => updateSystemVolume(systemVolume - 5)}
+                    aria-label="Lower system volume"
+                  >
+                    −
+                  </button>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="1"
+                    value={systemVolume}
+                    disabled={!devices.system_volume?.available}
+                    onInput={(event) =>
+                      setSystemVolume(Number(event.currentTarget.value))
+                    }
+                    onChange={(event) =>
+                      updateSystemVolume(Number(event.currentTarget.value))
+                    }
+                    aria-label="Raspberry Pi system volume"
+                  />
+                  <button
+                    type="button"
+                    disabled={!devices.system_volume?.available}
+                    onClick={() => updateSystemVolume(systemVolume + 5)}
+                    aria-label="Raise system volume"
+                  >
+                    +
+                  </button>
+                </div>
+                {!devices.system_volume?.available && (
+                  <small>
+                    System mixer control is available on the Raspberry Pi.
+                  </small>
+                )}
+              </div>
               {devices.audio_status?.last_error && (
                 <p class="hardware-test-result error">
                   Last audio error: {devices.audio_status.last_error}
@@ -1634,5 +1695,48 @@ function SettingToggle({
         onChange={(event) => onChange(event.currentTarget.checked)}
       />
     </label>
+  );
+}
+
+function SettingStepper({
+  label,
+  value,
+  min,
+  max,
+  suffix = "",
+  onChange
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  suffix?: string;
+  onChange: (value: number) => void;
+}) {
+  const bounded = (next: number) => Math.max(min, Math.min(max, next));
+  return (
+    <div class="setting-stepper">
+      <span>{label}</span>
+      <div>
+        <button
+          type="button"
+          onClick={() => onChange(bounded(value - 1))}
+          disabled={value <= min}
+          aria-label={`Decrease ${label}`}
+        >
+          −
+        </button>
+        <strong>{value}</strong>
+        {suffix && <small>{suffix}</small>}
+        <button
+          type="button"
+          onClick={() => onChange(bounded(value + 1))}
+          disabled={value >= max}
+          aria-label={`Increase ${label}`}
+        >
+          +
+        </button>
+      </div>
+    </div>
   );
 }

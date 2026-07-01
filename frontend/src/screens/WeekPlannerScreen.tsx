@@ -3,6 +3,7 @@ import { api, jsonBody } from "../api";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Modal } from "../components/Modal";
 import { TouchKeyboard } from "../components/TouchKeyboard";
+import { WeatherIcon } from "../components/WeatherIcon";
 import { onScreenKeyboardEnabled } from "../inputPreferences";
 import {
   CalendarData,
@@ -16,7 +17,7 @@ import {
   Weather,
   WeatherAlert
 } from "../types";
-import { forecastWeatherCode, roundTemperature, weatherKind } from "../weatherPresentation";
+import { forecastWeatherCode, roundTemperature } from "../weatherPresentation";
 import { PLANNER_PASTELS } from "../plannerPalette";
 
 interface Props {
@@ -62,23 +63,6 @@ function addDays(value: string, days: number): string {
   return localDate(result);
 }
 
-function weatherSymbol(code: number): string {
-  switch (weatherKind(code)) {
-    case "storm":
-      return "⛈";
-    case "rain":
-      return "🌧";
-    case "snow":
-      return "❄";
-    case "fog":
-      return "🌫";
-    case "cloud":
-      return "☁";
-    default:
-      return "☀";
-  }
-}
-
 function eventFallsOn(event: CalendarEvent, day: string): boolean {
   const start = dateAtNoon(day);
   start.setHours(0, 0, 0, 0);
@@ -114,6 +98,75 @@ export function WeekPlannerScreen({
   const weekScroller = useRef<HTMLDivElement>(null);
   const positionedWeek = useRef("");
   const suppressMealClick = useRef(false);
+
+  const beginWeekPan = (event: PointerEvent) => {
+    if (!event.isPrimary || (event.button !== 0 && event.pointerType === "mouse")) {
+      return;
+    }
+    const scroller = weekScroller.current;
+    const target = event.target as HTMLElement | null;
+    if (!scroller || !target || target.closest("input, textarea, select")) return;
+    const day = target.closest<HTMLElement>(".planner-day");
+    const pointerId = event.pointerId;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const startLeft = scroller.scrollLeft;
+    const startTop = day?.scrollTop || 0;
+    let axis: "x" | "y" | null = null;
+    let dragged = false;
+    const move = (moveEvent: PointerEvent) => {
+      if (moveEvent.pointerId !== pointerId) return;
+      if (document.documentElement.classList.contains("planner-drag-active")) {
+        cleanup();
+        return;
+      }
+      const deltaX = moveEvent.clientX - startX;
+      const deltaY = moveEvent.clientY - startY;
+      if (!axis && Math.hypot(deltaX, deltaY) >= 8) {
+        const dayCanScroll =
+          Boolean(day) && day!.scrollHeight > day!.clientHeight + 2;
+        axis =
+          Math.abs(deltaX) > Math.abs(deltaY) || !dayCanScroll ? "x" : "y";
+      }
+      if (!axis) return;
+      dragged = true;
+      moveEvent.preventDefault();
+      if (axis === "x") scroller.scrollLeft = startLeft - deltaX;
+      else if (day) day.scrollTop = startTop - deltaY;
+    };
+    const suppressClick = (clickEvent: MouseEvent) => {
+      clickEvent.preventDefault();
+      clickEvent.stopImmediatePropagation();
+    };
+    const cleanup = () => {
+      document.removeEventListener("pointermove", move, true);
+      document.removeEventListener("pointerup", end, true);
+      document.removeEventListener("pointercancel", cancel, true);
+    };
+    const end = (endEvent: PointerEvent) => {
+      if (endEvent.pointerId !== pointerId) return;
+      cleanup();
+      if (dragged) {
+        document.addEventListener("click", suppressClick, {
+          capture: true,
+          once: true
+        });
+        window.setTimeout(
+          () => document.removeEventListener("click", suppressClick, true),
+          350
+        );
+      }
+    };
+    const cancel = (cancelEvent: PointerEvent) => {
+      if (cancelEvent.pointerId === pointerId) cleanup();
+    };
+    document.addEventListener("pointermove", move, {
+      capture: true,
+      passive: false
+    });
+    document.addEventListener("pointerup", end, true);
+    document.addEventListener("pointercancel", cancel, true);
+  };
 
   const days = useMemo(
     () => Array.from({ length: 7 }, (_, index) => addDays(weekStart, index)),
@@ -384,7 +437,13 @@ export function WeekPlannerScreen({
         ))}
         <small>Hold and drag people onto chores</small>
       </div>
-      <div class="week-days" ref={weekScroller}>
+      <div
+        class="week-days"
+        ref={weekScroller}
+        onPointerDownCapture={(event) =>
+          beginWeekPan(event as unknown as PointerEvent)
+        }
+      >
         {days.map((day) => {
           const date = dateAtNoon(day);
           const meals = planner?.meals.filter((item) => item.planned_date === day) || [];
@@ -438,7 +497,7 @@ export function WeekPlannerScreen({
                         !
                       </button>
                     )}
-                    <b>{weatherSymbol(weatherCode)}</b>
+                    <b><WeatherIcon code={weatherCode} /></b>
                     <span>
                       {roundTemperature(weather?.daily.temperature_2m_max?.[weatherIndex])}° /
                       {roundTemperature(weather?.daily.temperature_2m_min?.[weatherIndex])}°

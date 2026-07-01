@@ -43,7 +43,11 @@ class DisplayController:
         displays = [base.get("WAYLAND_DISPLAY", ""), "wayland-0", "wayland-1"]
         if runtime and Path(runtime).is_dir():
             displays = [
-                *(path.name for path in Path(runtime).glob("wayland-*")),
+                *(
+                    path.name
+                    for path in Path(runtime).glob("wayland-*")
+                    if path.is_socket()
+                ),
                 *displays,
             ]
         environments: list[dict[str, str]] = []
@@ -198,6 +202,104 @@ class AudioController:
             ),
             "last_error": self.last_error,
             "last_success_at": self.last_success_at,
+        }
+
+    @staticmethod
+    def system_volume() -> dict[str, object]:
+        if platform.system() != "Linux":
+            return {"available": False, "volume": None, "backend": ""}
+        commands = []
+        if shutil.which("wpctl"):
+            commands.append(("pipewire", ["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"]))
+        if shutil.which("amixer"):
+            commands.extend(
+                [
+                    ("alsa-master", ["amixer", "get", "Master"]),
+                    ("alsa-pcm", ["amixer", "get", "PCM"]),
+                ]
+            )
+        errors: list[str] = []
+        for backend, command in commands:
+            try:
+                result = subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    timeout=8,
+                    check=False,
+                )
+                output = f"{result.stdout}\n{result.stderr}"
+                match = (
+                    re.search(r"Volume:\s*([0-9.]+)", output)
+                    if backend == "pipewire"
+                    else re.search(r"\[(\d+)%\]", output)
+                )
+                if result.returncode == 0 and match:
+                    value = (
+                        round(float(match.group(1)) * 100)
+                        if backend == "pipewire"
+                        else int(match.group(1))
+                    )
+                    return {
+                        "available": True,
+                        "volume": min(100, max(0, value)),
+                        "backend": backend,
+                        "muted": "[MUTED]" in output,
+                    }
+                errors.append((result.stderr or result.stdout).strip())
+            except Exception as error:
+                errors.append(str(error))
+        return {
+            "available": False,
+            "volume": None,
+            "backend": "",
+            "error": "; ".join(item for item in errors if item),
+        }
+
+    @staticmethod
+    def set_system_volume(volume: int) -> dict[str, object]:
+        value = min(100, max(0, int(volume)))
+        commands = []
+        if shutil.which("wpctl"):
+            commands.append(
+                (
+                    "pipewire",
+                    ["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", f"{value / 100:.2f}"],
+                )
+            )
+        if shutil.which("amixer"):
+            commands.extend(
+                [
+                    ("alsa-master", ["amixer", "sset", "Master", f"{value}%", "unmute"]),
+                    ("alsa-pcm", ["amixer", "sset", "PCM", f"{value}%", "unmute"]),
+                ]
+            )
+        errors: list[str] = []
+        for backend, command in commands:
+            try:
+                result = subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    timeout=8,
+                    check=False,
+                )
+                if result.returncode == 0:
+                    return {
+                        "available": True,
+                        "volume": value,
+                        "backend": backend,
+                        "muted": value == 0,
+                    }
+                errors.append((result.stderr or result.stdout).strip())
+            except Exception as error:
+                errors.append(str(error))
+        return {
+            "available": False,
+            "volume": None,
+            "backend": "",
+            "error": "; ".join(item for item in errors if item)
+            or "No supported system mixer was found",
         }
 
     def probe(self, kind: str, volume: int) -> dict[str, object]:

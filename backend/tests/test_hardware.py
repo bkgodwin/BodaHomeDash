@@ -130,3 +130,28 @@ def test_display_controller_discovers_actual_wayland_output(monkeypatch):
     assert display.off() is True
     assert display.output == "HDMI-A-2"
     assert any("HDMI-A-2" in command for command in calls)
+
+
+def test_pipewire_system_volume_control(monkeypatch):
+    def run(command, **kwargs):
+        if "get-volume" in command:
+            return SimpleNamespace(
+                returncode=0, stdout="Volume: 0.42\n", stderr=""
+            )
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(hardware.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(
+        hardware.shutil,
+        "which",
+        lambda name: "/usr/bin/wpctl" if name == "wpctl" else None,
+    )
+    monkeypatch.setattr(hardware.subprocess, "run", run)
+
+    assert AudioController.system_volume()["volume"] == 42
+    assert AudioController.set_system_volume(67) == {
+        "available": True,
+        "volume": 67,
+        "backend": "pipewire",
+        "muted": False,
+    }

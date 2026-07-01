@@ -1897,6 +1897,7 @@ def hardware_devices():
         "audio_outputs": AudioController.outputs(),
         "audio_output": database.setting("audio_output", "default"),
         "audio_status": services.audio.status(),
+        "system_volume": AudioController.system_volume(),
         "motion_status": services.pir_status(),
         "display_status": services.display.status(),
     }
@@ -1905,6 +1906,22 @@ def hardware_devices():
 @app.get("/api/v1/hardware/motion")
 def hardware_motion_status():
     return services.pir_status()
+
+
+@app.get("/api/v1/hardware/system-volume")
+def hardware_system_volume():
+    return AudioController.system_volume()
+
+
+@app.put("/api/v1/hardware/system-volume")
+def set_hardware_system_volume(volume: int = Query(ge=0, le=100)):
+    result = AudioController.set_system_volume(volume)
+    if not result.get("available"):
+        raise HTTPException(
+            status_code=503,
+            detail=result.get("error") or "System volume control is unavailable",
+        )
+    return result
 
 
 @app.post("/api/v1/hardware/test")

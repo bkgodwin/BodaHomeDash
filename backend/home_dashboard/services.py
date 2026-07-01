@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import threading
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -64,6 +65,7 @@ class DashboardServices:
         self.display_asleep = False
         self.display_awake_lock = False
         self._display_test_task: asyncio.Task | None = None
+        self._motion_suppressed_until = 0.0
         self._sync_locks = {
             "weather": asyncio.Lock(),
             "alerts": asyncio.Lock(),
@@ -605,6 +607,8 @@ class DashboardServices:
             self.wake()
 
     def motion(self) -> None:
+        if time.monotonic() < self._motion_suppressed_until:
+            return
         self.activity()
         self.hub.broadcast_threadsafe("motion.detected", {"at": utcnow()})
 
@@ -622,6 +626,7 @@ class DashboardServices:
         if self._display_test_task:
             self._display_test_task.cancel()
         mode = self.database.setting("display_sleep_mode", "hdmi")
+        self._motion_suppressed_until = time.monotonic() + 5
         success = True
         if mode == "hdmi":
             success = self.display.off()
@@ -646,6 +651,7 @@ class DashboardServices:
             "success": True,
             "mode": mode,
             "restores_in_seconds": 15,
+            "motion_suppressed_seconds": 5,
             **self.display.status(),
         }
 

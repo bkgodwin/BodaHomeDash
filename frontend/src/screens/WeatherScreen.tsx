@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { api } from "../api";
 import { RadarMap } from "../components/RadarMap";
+import { WeatherIcon } from "../components/WeatherIcon";
 import { Weather, WeatherAlert } from "../types";
 import { installKioskDragScroll } from "../kioskDragScroll";
 import {
@@ -13,17 +14,6 @@ import {
 } from "../weatherPresentation";
 
 type Tab = "conditions" | "hourly" | "week";
-
-const symbol = (code = 0) =>
-  [0, 1].includes(code)
-    ? "☀"
-    : [2, 3].includes(code)
-      ? "⛅"
-      : [71, 73, 75, 77, 85, 86].includes(code)
-        ? "❄"
-        : [95, 96, 99].includes(code)
-          ? "⛈"
-          : "🌧";
 
 function last24HourPrecipitation(weather: Weather): number {
   const times = (weather.hourly.time || []).map(String);
@@ -97,9 +87,34 @@ function TropicalWeatherPanel({
           frameScrollCleanup.current = null;
           try {
             if (frame.current?.contentDocument) {
-              frameScrollCleanup.current = installKioskDragScroll(
-                frame.current.contentDocument
-              );
+              const document = frame.current.contentDocument;
+              const style = document.createElement("style");
+              style.textContent = `
+                html, body, body * {
+                  -webkit-user-select: none !important;
+                  user-select: none !important;
+                }
+                input, textarea {
+                  -webkit-user-select: text !important;
+                  user-select: text !important;
+                }
+                a, button, input, select {
+                  cursor: pointer;
+                }
+              `;
+              document.head?.appendChild(style);
+              const preventSelection = (event: Event) => {
+                if (!(event.target as HTMLElement | null)?.closest("input, textarea")) {
+                  event.preventDefault();
+                }
+              };
+              document.addEventListener("selectstart", preventSelection);
+              const removeScroll = installKioskDragScroll(document);
+              frameScrollCleanup.current = () => {
+                removeScroll();
+                document.removeEventListener("selectstart", preventSelection);
+                style.remove();
+              };
             }
           } catch {
             // Navigation outside the same-origin NHC proxy disables this fallback.
@@ -391,7 +406,7 @@ export function WeatherScreen({
           </button>
         </div>
         <div class="weather-hero">
-          <b>{symbol(Number(current.weather_code))}</b>
+          <b><WeatherIcon code={Number(current.weather_code)} /></b>
           <strong>
             {roundTemperature(current.temperature_2m)}
             {weather.units.temperature}
@@ -408,7 +423,7 @@ export function WeatherScreen({
         <div class="conditions-layout">
           <section class="condition-dashboard">
             <article class="condition-now-card">
-              <span>{symbol(Number(current.weather_code))}</span>
+              <span><WeatherIcon code={Number(current.weather_code)} /></span>
               <div><small>Right now</small><strong>{roundTemperature(current.temperature_2m)}{weather.units.temperature}</strong><p>{apparentLabel} {roundTemperature(current.apparent_temperature)}{weather.units.temperature}</p></div>
             </article>
             <WindCompass
@@ -460,7 +475,7 @@ export function WeatherScreen({
                   style={{ background: weatherGradient(code, { weather, timestamp: time, temperature: weather.hourly.temperature_2m[index], temperatureUnit: weather.units.temperature }) }}
                 >
                   <span>{new Date(time).toLocaleTimeString([], { hour: "numeric" })}</span>
-                  <b>{symbol(code)}</b>
+                  <b><WeatherIcon code={code} /></b>
                   <strong>{roundTemperature(weather.hourly.temperature_2m[index])}{weather.units.temperature}</strong>
                   <small>{weather.hourly.precipitation_probability[index]}% rain</small>
                 </article>
@@ -494,7 +509,7 @@ export function WeatherScreen({
                     weekday: "long"
                   })}
                 </strong>
-                <b>{symbol(code)}</b>
+                <b><WeatherIcon code={code} /></b>
                 <span>
                   {roundTemperature(weather.daily.temperature_2m_max[index])}° /{" "}
                   {roundTemperature(weather.daily.temperature_2m_min[index])}°

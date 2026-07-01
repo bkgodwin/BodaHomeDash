@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { api, jsonBody } from "../api";
 import { Modal } from "../components/Modal";
 import { NumberPad, TouchKeyboard } from "../components/TouchKeyboard";
+import { WeatherIcon } from "../components/WeatherIcon";
 import { onScreenKeyboardEnabled } from "../inputPreferences";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import {
@@ -57,15 +58,6 @@ function eventOccursOnDay(event: CalendarEvent, day: string): boolean {
     new Date(event.starts_at).getTime() < end.getTime() &&
     new Date(event.ends_at).getTime() > start.getTime()
   );
-}
-
-function weatherSymbol(code = 0): string {
-  if ([0, 1].includes(code)) return "☀";
-  if ([2, 3].includes(code)) return "⛅";
-  if ([45, 48].includes(code)) return "≋";
-  if ([71, 73, 75, 77, 85, 86].includes(code)) return "❄";
-  if ([95, 96, 99].includes(code)) return "⛈";
-  return "🌧";
 }
 
 export function formatTimerCountdown(milliseconds: number): string {
@@ -348,7 +340,7 @@ export function HomeScreen({
         >
           <button class="widget-heading" onClick={() => onNavigate("weather")}>
             <span class="weather-main-symbol">
-              {weatherSymbol(Number(current.weather_code || 0))}
+              <WeatherIcon code={Number(current.weather_code || 0)} />
             </span>
             <span>
               <strong>
@@ -412,7 +404,7 @@ export function HomeScreen({
                     <span>
                       {itemDate.toLocaleTimeString([], { hour: "numeric" })}
                     </span>
-                    <b>{weatherSymbol(code)}</b>
+                    <b><WeatherIcon code={code} /></b>
                     <span>
                       {roundTemperature(
                         weather?.hourly.temperature_2m?.[index]
@@ -447,7 +439,7 @@ export function HomeScreen({
                         weekday: "short"
                       })}
                     </span>
-                    <b>{weatherSymbol(code)}</b>
+                    <b><WeatherIcon code={code} /></b>
                     <span>
                       {roundTemperature(
                         weather?.daily.temperature_2m_max?.[index]

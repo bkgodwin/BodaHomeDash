@@ -80,6 +80,14 @@ select:focus-visible {
   pointer-events: none;
 }
 
+.weather-icon {
+  width: 1.45em;
+  height: 1.45em;
+  display: inline-block;
+  overflow: visible;
+  vertical-align: middle;
+}
+
 .glass {
   background: var(--glass);
   border: 1px solid var(--glass-border);
@@ -2163,6 +2171,8 @@ select:focus-visible {
 .background-effect-checklist{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:7px}.background-effect-checklist label{min-height:46px;display:flex;align-items:center;gap:9px;padding:7px 11px;border:1px solid #ffffff22;border-radius:12px;color:var(--text-muted);background:#ffffff09;font-weight:650}.background-effect-checklist label.active{color:#fff;border-color:#8bd6ff9c;background:#68b9e333}.background-effect-checklist input{width:22px;height:22px;accent-color:#68bce9}
 .preparing-dashboard{display:flex;flex-direction:column;gap:10px;font-size:1.2rem}.preparing-dashboard small{color:var(--text-muted);font-size:.9rem}.preparing-spinner{width:46px;height:46px;margin-bottom:8px;border:4px solid #ffffff2b;border-top-color:#bdeaff;border-radius:50%;animation:preparing-spin .9s linear infinite}@keyframes preparing-spin{to{transform:rotate(360deg)}}
 .display-test-safety{padding:10px 12px;border:1px solid #8fd9ff38;border-radius:12px;background:#4d9fd51a}
+.setting-stepper{min-height:66px;display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:10px}.setting-stepper>span{font-weight:700}.setting-stepper>div{display:grid;grid-template-columns:56px minmax(42px,auto) auto 56px;align-items:center;gap:9px}.setting-stepper button{width:56px;height:56px;border:1px solid #ffffff2c;border-radius:15px;color:#fff;background:#ffffff12;font-size:1.65rem;font-weight:700}.setting-stepper button:disabled{opacity:.35}.setting-stepper strong{font-size:1.15rem;text-align:right}.setting-stepper small{color:var(--text-muted)}
+.system-volume-control{display:grid;gap:10px;margin:14px 0;padding:13px;border:1px solid #ffffff20;border-radius:15px;background:#ffffff0a}.system-volume-control>div:first-child{display:flex;align-items:center;justify-content:space-between}.system-volume-control>div:nth-child(2){display:grid;grid-template-columns:56px minmax(180px,1fr) 56px;align-items:center;gap:12px}.system-volume-control button{width:56px;height:56px;border:1px solid #ffffff2c;border-radius:15px;color:#fff;background:#ffffff12;font-size:1.55rem}.system-volume-control input[type=range]{width:100%;height:40px;accent-color:#7bcdf4}.system-volume-control input[type=range]::-webkit-slider-thumb{width:30px;height:30px}.system-volume-control small{color:var(--text-muted)}
 
 .mobile-scanner{display:grid;gap:12px}
 .camera-viewport{position:relative;min-height:240px;overflow:hidden;border:1px solid #ffffff2d;border-radius:18px;background:#020a12}
@@ -2507,6 +2517,9 @@ select:focus-visible {
   scroll-snap-type: x proximity;
   overscroll-behavior: contain;
   scrollbar-width: thin;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .planner-day {

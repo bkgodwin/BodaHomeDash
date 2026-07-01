@@ -19,7 +19,10 @@ Environment=PYTHONUNBUFFERED=1
 Environment=XDG_RUNTIME_DIR=/run/user/@UID@
 Environment=PIPEWIRE_RUNTIME_DIR=/run/user/@UID@
 Environment=PULSE_RUNTIME_PATH=/run/user/@UID@/pulse
-Environment=WAYLAND_DISPLAY=wayland-1
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/@UID@/bus
+# Raspberry Pi OS labwc normally uses wayland-0; the app also discovers any
+# active wayland-* socket at runtime for Wayfire and future compositor changes.
+Environment=WAYLAND_DISPLAY=wayland-0
 Environment=GPIOZERO_PIN_FACTORY=lgpio
 ExecStart=/opt/home-dashboard/.venv/bin/home-dashboard
 Restart=always
