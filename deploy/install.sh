@@ -27,6 +27,9 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y \
   python3 python3-venv python3-pip python3-dev build-essential \
   chromium curl git rsync swig wlr-randr alsa-utils pipewire-bin network-manager \
   liblgpio-dev
+# Raspberry Pi OS Trixie provides wlopm; older Bookworm images still use
+# wlr-randr, so keep this enhancement optional.
+DEBIAN_FRONTEND=noninteractive apt-get install -y wlopm || true
 
 echo "[2/8] Installing Home Dashboard..."
 install -d -m 0755 /opt/home-dashboard

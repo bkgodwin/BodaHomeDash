@@ -68,8 +68,7 @@ class WeatherProvider:
                 "precipitation_unit": "inch"
                 if temperature_unit == "fahrenheit"
                 else "mm",
-                "forecast_days": 5,
-                "past_days": 4,
+                "forecast_days": 10,
                 "current": ",".join(
                     [
                         "temperature_2m",

@@ -2,7 +2,7 @@ import sys
 from types import SimpleNamespace
 
 from home_dashboard import hardware
-from home_dashboard.hardware import AudioController, PIRMonitor
+from home_dashboard.hardware import AudioController, DisplayController, PIRMonitor
 
 
 def test_audio_outputs_include_alsa_devices(monkeypatch):
@@ -103,3 +103,30 @@ def test_pir_monitor_reports_live_edges(monkeypatch):
     assert monitor.status()["pin_factory"] == "FakeFactory"
     FakeInput.instance.is_active = False
     assert monitor.poll() is False
+
+
+def test_display_controller_discovers_actual_wayland_output(monkeypatch):
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        if command == ["wlr-randr"]:
+            return SimpleNamespace(returncode=0, stdout="HDMI-A-2 connected\n", stderr="")
+        return SimpleNamespace(
+            returncode=0 if "HDMI-A-2" in command else 1,
+            stdout="",
+            stderr="" if "HDMI-A-2" in command else "unknown output",
+        )
+
+    monkeypatch.setattr(hardware.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(
+        hardware.shutil,
+        "which",
+        lambda name: "/usr/bin/wlr-randr" if name == "wlr-randr" else None,
+    )
+    monkeypatch.setattr(hardware.subprocess, "run", run)
+    display = DisplayController("HDMI-A-1")
+
+    assert display.off() is True
+    assert display.output == "HDMI-A-2"
+    assert any("HDMI-A-2" in command for command in calls)

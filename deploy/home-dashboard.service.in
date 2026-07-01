@@ -7,11 +7,14 @@ Wants=network-online.target
 Type=simple
 User=@USER@
 Group=@USER@
-WorkingDirectory=/opt/home-dashboard
+# lgpio creates its .lgd-nfy notification pipe in the current directory.
+# Keep the runtime in the writable data path rather than the read-only app tree.
+WorkingDirectory=/var/lib/home-dashboard
 Environment=HOME_DASHBOARD_DATA=/var/lib/home-dashboard
 Environment=HOME_DASHBOARD_STATIC=/opt/home-dashboard/frontend/dist
 Environment=HOME_DASHBOARD_HOST=0.0.0.0
 Environment=HOME_DASHBOARD_PORT=8765
+Environment=PYTHONPATH=/opt/home-dashboard/backend
 Environment=PYTHONUNBUFFERED=1
 Environment=XDG_RUNTIME_DIR=/run/user/@UID@
 Environment=PIPEWIRE_RUNTIME_DIR=/run/user/@UID@

@@ -17,6 +17,18 @@ export function weatherKind(code: number): string {
   return "clear";
 }
 
+export function forecastWeatherCode(
+  code: number,
+  precipitationChance: number | string | undefined
+): number {
+  const chance = Number(precipitationChance);
+  return ["rain", "storm"].includes(weatherKind(code)) &&
+    Number.isFinite(chance) &&
+    chance < 30
+    ? 2
+    : code;
+}
+
 export function isNightAt(weather: Weather | null, timestamp: string): boolean {
   if (!weather) return false;
   const date = timestamp.slice(0, 10);
@@ -167,5 +179,24 @@ export function centeredDailyIndices(
   if (current < 0) current = dates.length - 1;
   const start = Math.max(0, current - radius);
   const end = Math.min(dates.length, current + radius + 1);
+  return Array.from({ length: end - start }, (_, offset) => start + offset);
+}
+
+export function forwardDailyIndices(
+  weather: Weather | null,
+  now = new Date(),
+  count = 10
+): number[] {
+  const dates = (weather?.daily.time || []).map(String);
+  if (!dates.length) return [];
+  const today = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, "0"),
+    String(now.getDate()).padStart(2, "0")
+  ].join("-");
+  let start = dates.indexOf(today);
+  if (start < 0) start = dates.findIndex((date) => date >= today);
+  if (start < 0) return [];
+  const end = Math.min(dates.length, start + count);
   return Array.from({ length: end - start }, (_, offset) => start + offset);
 }

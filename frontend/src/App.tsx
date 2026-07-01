@@ -74,6 +74,7 @@ export function App() {
   const [notepadOpen, setNotepadOpen] = useState(false);
   const [recipeToOpen, setRecipeToOpen] = useState<string | null>(null);
   const [recipeReturnToWeek, setRecipeReturnToWeek] = useState(false);
+  const [preparingDashboard, setPreparingDashboard] = useState(false);
   const recipeWakeHeld = useRef(false);
 
   const showToast = (message: string) => {
@@ -126,6 +127,23 @@ export function App() {
     if (!status?.local || status.platform !== "Linux") return;
     return installKioskDragScroll();
   }, [status?.local, status?.platform]);
+
+  useEffect(() => {
+    if (!status?.local || !status.authenticated) return;
+    let lastSent = 0;
+    const activity = () => {
+      const now = Date.now();
+      if (now - lastSent < 1500) return;
+      lastSent = now;
+      api("/activity", { method: "POST" }).catch(() => undefined);
+    };
+    document.addEventListener("pointerdown", activity, true);
+    document.addEventListener("keydown", activity, true);
+    return () => {
+      document.removeEventListener("pointerdown", activity, true);
+      document.removeEventListener("keydown", activity, true);
+    };
+  }, [status?.local, status?.authenticated]);
 
   useEffect(() => {
     if (!status?.authenticated) return;
@@ -248,14 +266,76 @@ export function App() {
     }
   };
 
+  const warmRadarCache = async (forecast: Weather | null) => {
+    if (forecast?.latitude == null || forecast?.longitude == null) return;
+    const zoom = 7;
+    const latitude = Math.max(-85.0511, Math.min(85.0511, Number(forecast.latitude)));
+    const longitude = Number(forecast.longitude);
+    const scale = 2 ** zoom;
+    const x = Math.floor(((longitude + 180) / 360) * scale);
+    const latitudeRadians = (latitude * Math.PI) / 180;
+    const y = Math.floor(
+      ((1 - Math.asinh(Math.tan(latitudeRadians)) / Math.PI) / 2) * scale
+    );
+    const loadImage = (url: string) =>
+      new Promise<void>((resolve) => {
+        const image = new Image();
+        const done = () => resolve();
+        image.onload = done;
+        image.onerror = done;
+        image.src = url;
+        window.setTimeout(done, 5000);
+      });
+    const urls = [
+      `https://a.tile.openstreetmap.org/${zoom}/${x}/${y}.png`
+    ];
+    try {
+      const response = await fetch("https://api.rainviewer.com/public/weather-maps.json");
+      const metadata = await response.json();
+      const latest = metadata?.radar?.past?.at(-1);
+      if (latest?.path && metadata?.host) {
+        for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+          for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+            urls.push(
+              `${metadata.host}${latest.path}/256/${zoom}/${x + offsetX}/${y + offsetY}/2/1_1.png`
+            );
+          }
+        }
+      }
+    } catch {
+      // The normal radar fallback remains available if warmup is offline.
+    }
+    await Promise.allSettled(urls.map(loadImage));
+  };
+
+  const prepareFirstDashboard = async () => {
+    const minimum = new Promise((resolve) => window.setTimeout(resolve, 10_000));
+    try {
+      await api("/refresh", { method: "POST" });
+      const forecast = await api<Weather | null>("/weather");
+      await Promise.allSettled([warmRadarCache(forecast), minimum]);
+    } catch {
+      await minimum;
+    }
+    await loadStatus();
+    await loadAtmosphere();
+    setPreparingDashboard(false);
+  };
+
   const atmosphere = useMemo(
     () =>
       backgroundAtmosphere(
         status?.background_preview || "auto",
         themeClock,
-        weather
+        weather,
+        status?.background_preview_effects || []
       ),
-    [status?.background_preview, themeClock, weather]
+    [
+      status?.background_preview,
+      status?.background_preview_effects,
+      themeClock,
+      weather
+    ]
   );
   const background = useMemo(
     () => timeOfDayTheme(atmosphere.now, atmosphere.weather),
@@ -263,6 +343,14 @@ export function App() {
   );
 
   if (!status) return <div class="startup-screen">Starting Home Dashboard…</div>;
+  if (preparingDashboard)
+    return (
+      <div class="startup-screen preparing-dashboard">
+        <span class="preparing-spinner" />
+        <strong>We are preparing your dashboard.</strong>
+        <small>One moment please…</small>
+      </div>
+    );
   if (!status.authenticated)
     return (
       <PinLogin
@@ -283,7 +371,9 @@ export function App() {
         <SettingsScreen
           setupMode
           onToast={showToast}
-          onSetupComplete={loadStatus}
+          onSetupStart={() => setPreparingDashboard(true)}
+          onSetupAbort={() => setPreparingDashboard(false)}
+          onSetupComplete={prepareFirstDashboard}
         />
         {toast && <div class="toast">{toast}</div>}
       </div>

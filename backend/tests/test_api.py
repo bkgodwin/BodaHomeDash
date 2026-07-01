@@ -264,6 +264,12 @@ def test_week_planner_household_and_notepad(client):
     )
     assert moved_meal.status_code == 200
     assert moved_meal.json()["planned_date"] == "2031-01-09"
+    moved_note = client.put(
+        f"/api/v1/planner/notes/{note.json()['id']}/move",
+        json={"planned_date": "2031-01-10"},
+    )
+    assert moved_note.status_code == 200
+    assert moved_note.json()["planned_date"] == "2031-01-10"
 
     saved = client.put(
         "/api/v1/notepad",

@@ -5,8 +5,9 @@ import { NumberPad, TouchKeyboard } from "../components/TouchKeyboard";
 import { onScreenKeyboardEnabled } from "../inputPreferences";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import {
-  centeredDailyIndices,
+  forwardDailyIndices,
   centeredHourlyIndices,
+  forecastWeatherCode,
   roundTemperature,
   weatherGradient
 } from "../weatherPresentation";
@@ -230,7 +231,7 @@ export function HomeScreen({
     [weather, now.getHours()]
   );
   const todayKey = keyForDate(now);
-  const dailyIndices = centeredDailyIndices(weather, now, 4);
+  const dailyIndices = forwardDailyIndices(weather, now, 10);
 
   useEffect(() => {
     const strip = hourlyStripRef.current;
@@ -375,7 +376,7 @@ export function HomeScreen({
                 class={forecastMode === "week" ? "active" : ""}
                 onClick={() => setForecastMode("week")}
               >
-                9 Day
+                10 Day
               </button>
             </div>
           </div>
@@ -424,9 +425,9 @@ export function HomeScreen({
             {forecastMode === "week" &&
               dailyIndices.map((index) => {
                 const item = String(weather?.daily.time?.[index] || "");
-                const code = Number(
+                const code = forecastWeatherCode(Number(
                   weather?.daily.weather_code?.[index] || 0
-                );
+                ), weather?.daily.precipitation_probability_max?.[index]);
                 return (
                   <div
                     ref={item === todayKey ? currentDayRef : undefined}

@@ -2,10 +2,12 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { api } from "../api";
 import { RadarMap } from "../components/RadarMap";
 import { Weather, WeatherAlert } from "../types";
+import { installKioskDragScroll } from "../kioskDragScroll";
 import {
-  centeredDailyIndices,
+  forwardDailyIndices,
   centeredHourlyIndices,
   compassDirection,
+  forecastWeatherCode,
   roundTemperature,
   weatherGradient
 } from "../weatherPresentation";
@@ -48,6 +50,7 @@ function TropicalWeatherPanel({
   localDevice: boolean;
 }) {
   const frame = useRef<HTMLIFrameElement>(null);
+  const frameScrollCleanup = useRef<(() => void) | null>(null);
   const [loading, setLoading] = useState(true);
   const homeUrl = localDevice ? "/api/v1/tropical" : "/api/v1/tropical?mobile=1";
   const navigate = (direction: "back" | "forward" | "home" | "reload") => {
@@ -63,6 +66,10 @@ function TropicalWeatherPanel({
       browser.src = homeUrl;
     }
   };
+  useEffect(
+    () => () => frameScrollCleanup.current?.(),
+    []
+  );
   return (
     <main class="page-screen glass tropical-weather-page">
       <header class="tropical-toolbar">
@@ -84,7 +91,20 @@ function TropicalWeatherPanel({
         src={homeUrl}
         title="National Hurricane Center"
         sandbox="allow-same-origin allow-forms allow-downloads"
-        onLoad={() => setLoading(false)}
+        onLoad={() => {
+          setLoading(false);
+          frameScrollCleanup.current?.();
+          frameScrollCleanup.current = null;
+          try {
+            if (frame.current?.contentDocument) {
+              frameScrollCleanup.current = installKioskDragScroll(
+                frame.current.contentDocument
+              );
+            }
+          } catch {
+            // Navigation outside the same-origin NHC proxy disables this fallback.
+          }
+        }}
       />
     </main>
   );
@@ -195,6 +215,7 @@ export function WeatherScreen({
   const [tropicalOpen, setTropicalOpen] = useState(false);
   const currentHourRef = useRef<HTMLElement>(null);
   const currentDayRef = useRef<HTMLElement>(null);
+  const dailyListRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     Promise.all([
       api<Weather | null>("/weather"),
@@ -218,13 +239,9 @@ export function WeatherScreen({
   }, [tab, weather?.current?.time]);
   useEffect(() => {
     if (tab !== "week") return;
-    window.requestAnimationFrame(() =>
-      currentDayRef.current?.scrollIntoView({
-        behavior: "smooth",
-        inline: "nearest",
-        block: "center"
-      })
-    );
+    window.requestAnimationFrame(() => {
+      if (dailyListRef.current) dailyListRef.current.scrollTop = 0;
+    });
   }, [tab, weather?.current?.time]);
   if (!weather)
     return (
@@ -238,7 +255,7 @@ export function WeatherScreen({
   const precip24 = last24HourPrecipitation(weather);
   const hourlyIndices = centeredHourlyIndices(weather, new Date(), 18);
   const today = new Date().toISOString().slice(0, 10);
-  const dailyIndices = centeredDailyIndices(weather, new Date(), 4);
+  const dailyIndices = forwardDailyIndices(weather, new Date(), 10);
   const visibilityMiles =
     Number(current.visibility) /
     (weather.units.visibility === "m" ? 1609.344 : 5280);
@@ -359,7 +376,7 @@ export function WeatherScreen({
             [
               ["conditions", "Conditions & Radar"],
               ["hourly", "Hourly"],
-              ["week", "9 Day"]
+              ["week", "10 Day"]
             ] as [Tab, string][]
           ).map(([value, label]) => (
             <button
@@ -454,10 +471,13 @@ export function WeatherScreen({
         </div>
       )}
       {tab === "week" && (
-        <div class="daily-detail-list weather-tab-content">
+        <div ref={dailyListRef} class="daily-detail-list weather-tab-content">
           {dailyIndices.map((index) => {
             const time = String(weather.daily.time[index]);
-            const code = Number(weather.daily.weather_code[index]);
+            const code = forecastWeatherCode(
+              Number(weather.daily.weather_code[index]),
+              weather.daily.precipitation_probability_max[index]
+            );
             return (
               <article
                 ref={time === today ? currentDayRef : undefined}

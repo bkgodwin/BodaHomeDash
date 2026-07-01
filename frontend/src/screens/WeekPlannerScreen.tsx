@@ -13,9 +13,10 @@ import {
   PlannerNote,
   PlannerWeek,
   Recipe,
-  Weather
+  Weather,
+  WeatherAlert
 } from "../types";
-import { roundTemperature, weatherKind } from "../weatherPresentation";
+import { forecastWeatherCode, roundTemperature, weatherKind } from "../weatherPresentation";
 import { PLANNER_PASTELS } from "../plannerPalette";
 
 interface Props {
@@ -26,6 +27,7 @@ interface Props {
 
 type DragPayload =
   | { kind: "meal"; meal: PlannerMeal }
+  | { kind: "note"; note: PlannerNote }
   | { kind: "chore"; chore: PlannerChore }
   | {
       kind: "member";
@@ -98,6 +100,8 @@ export function WeekPlannerScreen({
   });
   const [weather, setWeather] = useState<Weather | null>(null);
   const [members, setMembers] = useState<HouseholdMember[]>([]);
+  const [alerts, setAlerts] = useState<WeatherAlert[]>([]);
+  const [selectedAlerts, setSelectedAlerts] = useState<WeatherAlert[]>([]);
   const [mealDate, setMealDate] = useState<string | null>(null);
   const [choreDate, setChoreDate] = useState<string | null>(null);
   const [noteDate, setNoteDate] = useState<string | null>(null);
@@ -119,16 +123,18 @@ export function WeekPlannerScreen({
   const load = async () => {
     const end = addDays(weekStart, 7);
     try {
-      const [plan, calendarData, forecast, household] = await Promise.all([
+      const [plan, calendarData, forecast, household, activeAlerts] = await Promise.all([
         api<PlannerWeek>(`/planner/week?start=${weekStart}`),
         api<CalendarData>(`/calendar?start=${weekStart}&end=${end}`),
         api<Weather | null>("/weather"),
-        api<HouseholdMember[]>("/household/members")
+        api<HouseholdMember[]>("/household/members"),
+        api<WeatherAlert[]>("/weather/alerts")
       ]);
       setPlanner(plan);
       setCalendar(calendarData);
       setWeather(forecast);
       setMembers(household);
+      setAlerts(activeAlerts.filter((alert) => !alert.dismissed && alert.severity !== "Extreme"));
     } catch (error: any) {
       onToast(error.message);
     }
@@ -181,6 +187,18 @@ export function WeekPlannerScreen({
   ) => {
     const target = document.elementFromPoint(x, y) as HTMLElement | null;
     try {
+      if (payload.kind === "note") {
+        const day = target?.closest<HTMLElement>("[data-planner-date]")?.dataset
+          .plannerDate;
+        if (!day || day === payload.note.planned_date) return;
+        await api(`/planner/notes/${payload.note.id}/move`, {
+          method: "PUT",
+          ...jsonBody({ planned_date: day })
+        });
+        onToast("Note moved");
+        await load();
+        return;
+      }
       if (payload.kind === "meal") {
         const day = target?.closest<HTMLElement>("[data-planner-date]")?.dataset
           .plannerDate;
@@ -276,6 +294,7 @@ export function WeekPlannerScreen({
     let lastY = event.clientY;
     const timer = window.setTimeout(() => {
       active = true;
+      document.documentElement.classList.add("planner-drag-active");
       navigator.vibrate?.(30);
       setDrag({ payload, x: lastX, y: lastY });
     }, 1000);
@@ -306,6 +325,7 @@ export function WeekPlannerScreen({
         }
         finishDrag(payload, endEvent.clientX, endEvent.clientY);
       }
+      document.documentElement.classList.remove("planner-drag-active");
       setDrag(null);
     };
     document.addEventListener("pointermove", move, { capture: true, passive: false });
@@ -373,7 +393,28 @@ export function WeekPlannerScreen({
           const events = calendar.events.filter((item) => eventFallsOn(item, day));
           const holidays = calendar.holidays.filter((item) => item.date === day);
           const weatherIndex = (weather?.daily.time || []).map(String).indexOf(day);
-          const weatherCode = Number(weather?.daily.weather_code?.[weatherIndex] ?? 0);
+          const weatherCode = forecastWeatherCode(
+            Number(weather?.daily.weather_code?.[weatherIndex] ?? 0),
+            weather?.daily.precipitation_probability_max?.[weatherIndex]
+          );
+          const dayStart = dateAtNoon(day);
+          dayStart.setHours(0, 0, 0, 0);
+          const dayEnd = new Date(dayStart.getTime() + DAY_MS);
+          const dayAlerts = alerts.filter((alert) => {
+            const parsedStart = alert.effective_at
+              ? new Date(alert.effective_at)
+              : new Date(0);
+            const parsedExpiration = alert.expires_at
+              ? new Date(alert.expires_at)
+              : new Date(8640000000000000);
+            const starts = Number.isFinite(parsedStart.getTime())
+              ? parsedStart
+              : new Date(0);
+            const expires = Number.isFinite(parsedExpiration.getTime())
+              ? parsedExpiration
+              : new Date(8640000000000000);
+            return starts < dayEnd && expires > dayStart;
+          });
           return (
             <section
               class={`planner-day ${
@@ -388,6 +429,15 @@ export function WeekPlannerScreen({
                 </div>
                 {weatherIndex >= 0 && (
                   <div class="planner-weather">
+                    {dayAlerts.length > 0 && (
+                      <button
+                        class="planner-weather-alert"
+                        aria-label={`${dayAlerts.length} weather alert${dayAlerts.length === 1 ? "" : "s"}`}
+                        onClick={() => setSelectedAlerts(dayAlerts)}
+                      >
+                        !
+                      </button>
+                    )}
                     <b>{weatherSymbol(weatherCode)}</b>
                     <span>
                       {roundTemperature(weather?.daily.temperature_2m_max?.[weatherIndex])}° /
@@ -537,7 +587,18 @@ export function WeekPlannerScreen({
               <div class="planner-section planner-notes">
                 <h3>Notes</h3>
                 {notes.map((note) => (
-                  <article>
+                  <article
+                    class="planner-draggable-card"
+                    data-planner-draggable
+                    onPointerDown={(event) => {
+                      if ((event.target as HTMLElement).closest("button")) return;
+                      beginHold(event as unknown as PointerEvent, {
+                        kind: "note",
+                        note
+                      });
+                    }}
+                    title="Hold for one second, then drag to another day"
+                  >
                     <span>{note.text}</span>
                     <button
                       aria-label="Delete note"
@@ -607,12 +668,59 @@ export function WeekPlannerScreen({
           }}
         />
       )}
+      {selectedAlerts.length > 0 && (
+        <Modal
+          title="Weather alert for this day"
+          onClose={() => setSelectedAlerts([])}
+          wide
+        >
+          <div class="planner-alert-details">
+            {selectedAlerts.map((alert) => (
+              <article>
+                <header>
+                  <span>⚠</span>
+                  <div>
+                    <h3>{alert.event}</h3>
+                    <small>
+                      {alert.expires_at
+                        ? `Expires ${new Date(alert.expires_at).toLocaleString()}`
+                        : "Active until canceled"}
+                    </small>
+                  </div>
+                </header>
+                <strong>{alert.headline}</strong>
+                <p>{alert.description}</p>
+                {alert.instruction && <p>{alert.instruction}</p>}
+                <button
+                  class="button primary"
+                  onClick={async () => {
+                    await api(
+                      `/weather/alerts/${encodeURIComponent(alert.alert_id)}/dismiss`,
+                      { method: "POST" }
+                    );
+                    setSelectedAlerts((items) =>
+                      items.filter((item) => item.alert_id !== alert.alert_id)
+                    );
+                    setAlerts((items) =>
+                      items.filter((item) => item.alert_id !== alert.alert_id)
+                    );
+                  }}
+                >
+                  Dismiss alert
+                </button>
+              </article>
+            ))}
+          </div>
+        </Modal>
+      )}
       {drag && (
         <div class="planner-drag-ghost" style={{ left: drag.x, top: drag.y }}>
           {drag.payload.kind === "chore"
             ? drag.payload.chore.title
             : drag.payload.kind === "meal"
               ? drag.payload.meal.title
+            : drag.payload.kind === "note"
+              ? "Planner note"
             : drag.payload.member.name}
         </div>
       )}

@@ -57,6 +57,7 @@ from .models import (
     PlannerMealInput,
     PlannerMealMove,
     PlannerNoteInput,
+    PlannerNoteMove,
     ReminderCreate,
     ReminderReorder,
     ReminderUpdate,
@@ -222,6 +223,9 @@ def status(request: Request) -> dict[str, Any]:
         "reduced_motion": database.setting("reduced_motion", False),
         "weather_effects": database.setting("weather_effects", "full"),
         "background_preview": database.setting("background_preview", "auto"),
+        "background_preview_effects": database.setting(
+            "background_preview_effects", []
+        ),
         "display_awake_lock": services.display_awake_lock,
         "onscreen_keyboard_enabled": database.setting(
             "onscreen_keyboard_enabled", True
@@ -741,6 +745,18 @@ async def create_planner_note(payload: PlannerNoteInput):
     )
     await hub.broadcast("planner.updated", {"scope": "notes"})
     return database.one("SELECT * FROM planner_notes WHERE id=?", (cursor.lastrowid,))
+
+
+@app.put("/api/v1/planner/notes/{note_id}/move")
+async def move_planner_note(note_id: int, payload: PlannerNoteMove):
+    changed = database.execute(
+        "UPDATE planner_notes SET planned_date=?,updated_at=? WHERE id=?",
+        (payload.planned_date.isoformat(), utcnow(), note_id),
+    ).rowcount
+    if not changed:
+        raise HTTPException(status_code=404, detail="Planner note not found")
+    await hub.broadcast("planner.updated", {"scope": "notes"})
+    return database.one("SELECT * FROM planner_notes WHERE id=?", (note_id,))
 
 
 @app.delete("/api/v1/planner/notes/{note_id}", status_code=204)
@@ -1882,6 +1898,7 @@ def hardware_devices():
         "audio_output": database.setting("audio_output", "default"),
         "audio_status": services.audio.status(),
         "motion_status": services.pir_status(),
+        "display_status": services.display.status(),
     }
 
 
@@ -1901,9 +1918,10 @@ async def hardware_test(payload: HardwareTest):
             "alert", int(database.setting("alert_volume", 55))
         )
     if payload.kind == "display_off":
-        return {"success": services.display.off()}
+        return await services.test_display_sleep()
     if payload.kind == "display_on":
-        return {"success": services.display.on()}
+        services.wake()
+        return {"success": True, **services.display.status()}
     previews = {
         "weather_advisory": {
             "event": "Heat Advisory",

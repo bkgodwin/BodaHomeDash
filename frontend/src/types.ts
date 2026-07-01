@@ -11,6 +11,7 @@ export interface Status {
   onscreen_keyboard_enabled: boolean;
   weather_effects: "off" | "subtle" | "full";
   background_preview: string;
+  background_preview_effects: string[];
   display_awake_lock: boolean;
   mobile_dash_address: string;
   platform: string;
@@ -132,6 +133,7 @@ export interface WeatherAlert {
   instruction: string;
   severity: string;
   expires_at: string;
+  effective_at?: string;
   dismissed: number;
 }
 

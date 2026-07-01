@@ -19,29 +19,127 @@ from typing import Callable
 class DisplayController:
     def __init__(self, output: str = "HDMI-A-1"):
         self.output = output
+        self.last_backend = ""
+        self.last_error = ""
 
     def off(self) -> bool:
-        return self._run("--off")
+        return self._run(False)
 
     def on(self) -> bool:
-        return self._run("--on")
+        return self._run(True)
 
-    def _run(self, action: str) -> bool:
+    def status(self) -> dict[str, str]:
+        return {
+            "output": self.output,
+            "backend": self.last_backend,
+            "last_error": self.last_error,
+        }
+
+    def _wayland_environments(self) -> list[dict[str, str]]:
+        base = os.environ.copy()
+        runtime = base.get("XDG_RUNTIME_DIR") or (
+            f"/run/user/{os.getuid()}" if hasattr(os, "getuid") else ""
+        )
+        displays = [base.get("WAYLAND_DISPLAY", ""), "wayland-0", "wayland-1"]
+        if runtime and Path(runtime).is_dir():
+            displays = [
+                *(path.name for path in Path(runtime).glob("wayland-*")),
+                *displays,
+            ]
+        environments: list[dict[str, str]] = []
+        for display in dict.fromkeys(item for item in displays if item):
+            environment = base.copy()
+            if runtime:
+                environment["XDG_RUNTIME_DIR"] = runtime
+            environment["WAYLAND_DISPLAY"] = display
+            environments.append(environment)
+        return environments or [base]
+
+    def _run(self, turn_on: bool) -> bool:
         if platform.system() != "Linux":
             return True
-        environment = os.environ.copy()
-        environment.setdefault("WAYLAND_DISPLAY", "wayland-1")
-        try:
-            subprocess.run(
-                ["wlr-randr", "--output", self.output, action],
-                env=environment,
-                timeout=8,
-                check=True,
-                capture_output=True,
-            )
-            return True
-        except Exception:
-            return False
+        action = "--on" if turn_on else "--off"
+        errors: list[str] = []
+        for environment in self._wayland_environments():
+            commands: list[tuple[str, list[str]]] = []
+            if shutil.which("wlopm"):
+                commands.append(
+                    ("wlopm", ["wlopm", action, self.output])
+                )
+                commands.append(
+                    ("wlopm-all", ["wlopm", action, "*"])
+                )
+            if shutil.which("wlr-randr"):
+                outputs = [self.output]
+                try:
+                    listed = subprocess.run(
+                        ["wlr-randr"],
+                        env=environment,
+                        timeout=8,
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                    )
+                    outputs.extend(
+                        line.split()[0]
+                        for line in listed.stdout.splitlines()
+                        if line and not line[0].isspace()
+                    )
+                except Exception:
+                    pass
+                commands.extend(
+                    (
+                        "wlr-randr",
+                        ["wlr-randr", "--output", output, action],
+                    )
+                    for output in dict.fromkeys(outputs)
+                )
+            for backend, command in commands:
+                try:
+                    result = subprocess.run(
+                        command,
+                        env=environment,
+                        timeout=8,
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                    )
+                    if result.returncode == 0:
+                        if backend == "wlr-randr":
+                            self.output = command[-2]
+                        self.last_backend = backend
+                        self.last_error = ""
+                        return True
+                    detail = (result.stderr or result.stdout).strip()
+                    errors.append(
+                        f"{backend} ({environment.get('WAYLAND_DISPLAY', '?')}): "
+                        f"{detail or f'exit {result.returncode}'}"
+                    )
+                except Exception as error:
+                    errors.append(f"{backend}: {error}")
+        if shutil.which("vcgencmd"):
+            try:
+                result = subprocess.run(
+                    ["vcgencmd", "display_power", "1" if turn_on else "0"],
+                    timeout=8,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                if (
+                    result.returncode == 0
+                    and f"={1 if turn_on else 0}" in result.stdout
+                ):
+                    self.last_backend = "vcgencmd"
+                    self.last_error = ""
+                    return True
+                errors.append((result.stderr or result.stdout).strip())
+            except Exception as error:
+                errors.append(f"vcgencmd: {error}")
+        self.last_error = "; ".join(item for item in errors if item) or (
+            "No supported Wayland display-power utility was found"
+        )
+        return False
 
 
 class AudioController:

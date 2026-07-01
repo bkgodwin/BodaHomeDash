@@ -52,4 +52,16 @@ describe("time-of-day theme", () => {
     expect(preview.code).toBe(63);
     expect(preview.cloudCover).toBe(95);
   });
+
+  it("layers storm and wind over a chosen night sky", () => {
+    const preview = backgroundAtmosphere(
+      "night",
+      new Date(2026, 5, 30, 12),
+      null,
+      ["storm", "wind"]
+    );
+    expect(preview.isDay).toBe(false);
+    expect(preview.code).toBe(95);
+    expect(preview.windSpeed).toBe(35);
+  });
 });

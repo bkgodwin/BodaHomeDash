@@ -76,6 +76,9 @@ systemctl daemon-reload
 
 write_status "running" "Updating application dependencies…"
 "$APP_DIR/.venv/bin/pip" install --disable-pip-version-check --upgrade "$APP_DIR[pi]"
+if ! command -v wlopm >/dev/null 2>&1; then
+  DEBIAN_FRONTEND=noninteractive apt-get install -y wlopm || true
+fi
 
 if [[ ! -f "$APP_DIR/frontend/dist/index.html" ]]; then
   write_status "error" "The downloaded release is missing the web application build."

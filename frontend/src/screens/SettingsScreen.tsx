@@ -12,7 +12,9 @@ import { PLANNER_PASTELS } from "../plannerPalette";
 
 interface Props {
   onToast: (message: string) => void;
-  onSetupComplete?: () => void;
+  onSetupStart?: () => void;
+  onSetupAbort?: () => void;
+  onSetupComplete?: () => void | Promise<void>;
   setupMode?: boolean;
 }
 
@@ -20,6 +22,8 @@ type Settings = Record<string, any>;
 
 export function SettingsScreen({
   onToast,
+  onSetupStart,
+  onSetupAbort,
   onSetupComplete,
   setupMode = false
 }: Props) {
@@ -150,8 +154,10 @@ export function SettingsScreen({
       });
       setSettings(next);
       onToast(message);
+      return true;
     } catch (error: any) {
       onToast(error.message);
+      return false;
     } finally {
       setBusy(false);
     }
@@ -387,23 +393,17 @@ export function SettingsScreen({
               />
               <div class="background-preview-setting">
                 <div>
-                  <strong>Background mode</strong>
-                  <p>Auto follows the current time and weather. Choose a scene to preview it or leave it displayed.</p>
+                  <strong>Background preview</strong>
+                  <p>Choose a base sky, then layer one or more effects for testing. Auto uses the live time and weather.</p>
                 </div>
+                <small>Base sky</small>
                 <div class="background-preview-grid" role="group" aria-label="Background mode">
                   {[
                     ["auto", "Auto"],
                     ["morning", "Morning"],
                     ["day", "Day"],
                     ["sunset", "Sunset"],
-                    ["night", "Night + moon"],
-                    ["clear", "Clear"],
-                    ["cloudy", "Cloudy"],
-                    ["rain", "Rain"],
-                    ["storm", "Storm"],
-                    ["wind", "Wind"],
-                    ["snow", "Snow"],
-                    ["fog", "Fog"]
+                    ["night", "Night + moon"]
                   ].map(([value, label]) => (
                     <button
                       type="button"
@@ -421,6 +421,41 @@ export function SettingsScreen({
                       {label}
                     </button>
                   ))}
+                </div>
+                <small>Effect layers</small>
+                <div class="background-effect-checklist">
+                  {[
+                    ["cloudy", "Clouds"],
+                    ["rain", "Rain"],
+                    ["storm", "Thunder & lightning"],
+                    ["wind", "Wind gusts"],
+                    ["snow", "Snow"],
+                    ["fog", "Fog"]
+                  ].map(([value, label]) => {
+                    const selected = (
+                      settings.background_preview_effects || []
+                    ).includes(value);
+                    return (
+                      <label class={selected ? "active" : ""}>
+                        <input
+                          type="checkbox"
+                          checked={selected}
+                          onChange={() => {
+                            const current: string[] =
+                              settings.background_preview_effects || [];
+                            const next = selected
+                              ? current.filter((item) => item !== value)
+                              : [...current, value];
+                            save(
+                              { background_preview_effects: next },
+                              "Background effect preview updated"
+                            );
+                          }}
+                        />
+                        {label}
+                      </label>
+                    );
+                  })}
                 </div>
               </div>
               <SettingToggle
@@ -843,12 +878,21 @@ export function SettingsScreen({
               <div class="button-row">
                 <button
                   class="button secondary"
-                  onClick={() =>
-                    api("/hardware/test", {
+                  onClick={async () => {
+                    const result = await api<any>("/hardware/test", {
                       method: "POST",
                       ...jsonBody({ kind: "display_off" })
-                    })
-                  }
+                    });
+                    setDevices((current: any) => ({
+                      ...current,
+                      display_status: result
+                    }));
+                    onToast(
+                      result.success
+                        ? "Display test started — touch the screen or wait 15 seconds"
+                        : `Display test failed: ${result.last_error || "display output unavailable"}`
+                    );
+                  }}
                 >
                   Test display off
                 </button>
@@ -864,6 +908,16 @@ export function SettingsScreen({
                   Display on
                 </button>
               </div>
+              <p class="hint display-test-safety">
+                During this test, touch the screen, press a key, scan a barcode,
+                or trigger the PIR sensor to wake the display. It will also turn
+                itself back on automatically after 15 seconds.
+              </p>
+              {devices.display_status?.last_error && (
+                <p class="hardware-test-result error">
+                  Last display error: {devices.display_status.last_error}
+                </p>
+              )}
             </SettingsCard>
             <SettingsCard title="Barcode scanner and audio">
               <div class="button-row">
@@ -1441,8 +1495,13 @@ export function SettingsScreen({
             <button
               class="button primary"
               onClick={async () => {
-                await save({ setup_complete: true }, "Setup complete");
-                onSetupComplete?.();
+                onSetupStart?.();
+                const saved = await save(
+                  { setup_complete: true },
+                  "Setup complete"
+                );
+                if (saved) await onSetupComplete?.();
+                else onSetupAbort?.();
               }}
             >
               Open my dashboard

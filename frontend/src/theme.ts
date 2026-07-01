@@ -104,7 +104,7 @@ export function timeOfDayTheme(
   const rain = [51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82].includes(code);
   const snow = [71, 73, 75, 77, 85, 86].includes(code);
   const fog = [45, 48].includes(code);
-  if (storm) result = [blend(result[0], "#25243d", 0.48), blend(result[1], "#38354d", 0.48)];
+  if (storm) result = [blend(result[0], "#10182a", 0.68), blend(result[1], "#20283a", 0.68)];
   else if (rain) result = [blend(result[0], "#315b78", 0.35), blend(result[1], "#496a7d", 0.35)];
   else if (snow) result = [blend(result[0], "#8abbd3", 0.28), blend(result[1], "#b3d4e2", 0.28)];
   else if (fog) result = [blend(result[0], "#87959e", 0.35), blend(result[1], "#a6afb4", 0.35)];
@@ -133,9 +133,18 @@ const PREVIEW_WEATHER: Record<string, { code: number; cloudCover: number }> = {
 export function backgroundAtmosphere(
   mode: string,
   now: Date,
-  weather: Weather | null
+  weather: Weather | null,
+  requestedEffects: string[] = []
 ): BackgroundAtmosphere {
-  if (!mode || mode === "auto") {
+  const legacyEffect =
+    mode in PREVIEW_WEATHER || mode === "wind" ? mode : "";
+  const effects = Array.from(
+    new Set([...(requestedEffects || []), ...(legacyEffect ? [legacyEffect] : [])])
+  );
+  const baseMode = mode in { morning: 1, day: 1, sunset: 1, night: 1 }
+    ? mode
+    : "auto";
+  if (baseMode === "auto" && effects.length === 0) {
     return {
       now,
       weather,
@@ -152,19 +161,24 @@ export function backgroundAtmosphere(
     sunset: 19,
     night: 23
   };
-  const timePreview = mode in previewTime;
-  const preview = PREVIEW_WEATHER[mode] || PREVIEW_WEATHER.clear;
+  const timePreview = baseMode in previewTime;
+  const effectName = ["storm", "snow", "rain", "fog", "cloudy"].find((item) =>
+    effects.includes(item)
+  ) || "clear";
+  const preview = PREVIEW_WEATHER[effectName];
   const displayTime = new Date(now);
-  if (timePreview) displayTime.setHours(previewTime[mode], 0, 0, 0);
+  if (timePreview) displayTime.setHours(previewTime[baseMode], 0, 0, 0);
   const previewIsDay = timePreview
-    ? mode !== "night"
+    ? baseMode !== "night"
     : Boolean(Number(weather?.current?.is_day ?? 1));
   const current = {
     ...(weather?.current || {}),
     weather_code: preview.code,
     cloud_cover: preview.cloudCover,
     is_day: previewIsDay ? 1 : 0,
-    wind_speed_10m: mode === "wind" ? 35 : Number(weather?.current?.wind_speed_10m || 0)
+    wind_speed_10m: effects.includes("wind")
+      ? 35
+      : Number(weather?.current?.wind_speed_10m || 0)
   };
   const previewSunrise = new Date(displayTime);
   previewSunrise.setHours(7, 0, 0, 0);

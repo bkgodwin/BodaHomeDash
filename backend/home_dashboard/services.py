@@ -63,6 +63,7 @@ class DashboardServices:
         self.last_activity = datetime.now(UTC)
         self.display_asleep = False
         self.display_awake_lock = False
+        self._display_test_task: asyncio.Task | None = None
         self._sync_locks = {
             "weather": asyncio.Lock(),
             "alerts": asyncio.Lock(),
@@ -88,6 +89,8 @@ class DashboardServices:
         ]
 
     async def stop(self) -> None:
+        if self._display_test_task:
+            self._display_test_task.cancel()
         for task in self.tasks:
             task.cancel()
         await asyncio.gather(*self.tasks, return_exceptions=True)
@@ -615,6 +618,37 @@ class DashboardServices:
         self.last_activity = datetime.now(UTC)
         self.hub.broadcast_threadsafe("display.wake", {"at": utcnow()})
 
+    async def test_display_sleep(self) -> dict[str, Any]:
+        if self._display_test_task:
+            self._display_test_task.cancel()
+        mode = self.database.setting("display_sleep_mode", "hdmi")
+        success = True
+        if mode == "hdmi":
+            success = self.display.off()
+        if not success:
+            return {
+                "success": False,
+                "mode": mode,
+                **self.display.status(),
+            }
+        self.display_asleep = True
+        await self.hub.broadcast("display.sleep", {"mode": mode, "test": True})
+
+        async def restore() -> None:
+            try:
+                await asyncio.sleep(15)
+                self.wake()
+            except asyncio.CancelledError:
+                return
+
+        self._display_test_task = asyncio.create_task(restore())
+        return {
+            "success": True,
+            "mode": mode,
+            "restores_in_seconds": 15,
+            **self.display.status(),
+        }
+
     async def _display_loop(self) -> None:
         while True:
             await asyncio.sleep(5)
@@ -629,10 +663,18 @@ class DashboardServices:
                 > timedelta(seconds=timeout)
             ):
                 mode = self.database.setting("display_sleep_mode", "hdmi")
+                success = True
                 if mode == "hdmi":
-                    self.display.off()
-                self.display_asleep = True
-                await self.hub.broadcast("display.sleep", {"mode": mode})
+                    success = self.display.off()
+                if success:
+                    self.display_asleep = True
+                    await self.hub.broadcast("display.sleep", {"mode": mode})
+                else:
+                    # Avoid retrying a broken compositor command every five seconds.
+                    self.last_activity = datetime.now(UTC)
+                    logger.warning(
+                        "Display sleep failed: %s", self.display.last_error
+                    )
 
     async def _pir_loop(self) -> None:
         while True:

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   centeredHourlyIndices,
   centeredDailyIndices,
+  forecastWeatherCode,
+  forwardDailyIndices,
   roundTemperature,
   weatherGradient,
   weatherKind
@@ -57,5 +59,21 @@ describe("weather presentation", () => {
     expect(
       centeredDailyIndices(value, new Date("2026-06-30T12:00:00"), 4)
     ).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
+  });
+
+  it("shows ten forward days beginning today", () => {
+    const value = weather([]);
+    value.daily.time = Array.from(
+      { length: 12 },
+      (_, index) => `2026-07-${String(index + 1).padStart(2, "0")}`
+    );
+    expect(
+      forwardDailyIndices(value, new Date("2026-07-02T12:00:00"), 10)
+    ).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  });
+
+  it("suppresses low-confidence daily rain icons", () => {
+    expect(forecastWeatherCode(61, 29)).toBe(2);
+    expect(forecastWeatherCode(61, 30)).toBe(61);
   });
 });

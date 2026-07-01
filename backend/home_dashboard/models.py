@@ -190,6 +190,10 @@ class PlannerNoteInput(BaseModel):
     text: str = Field(min_length=1, max_length=1000)
 
 
+class PlannerNoteMove(BaseModel):
+    planned_date: date
+
+
 class SharedNotepadInput(BaseModel):
     content_html: str = Field(default="", max_length=200_000)
 
