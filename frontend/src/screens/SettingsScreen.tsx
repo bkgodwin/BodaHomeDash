@@ -36,6 +36,8 @@ export function SettingsScreen({
   const [devices, setDevices] = useState<any>({ input_devices: [] });
   const [networks, setNetworks] = useState<any[]>([]);
   const [interfaces, setInterfaces] = useState<any[]>([]);
+  const [networkInfo, setNetworkInfo] = useState<any>(null);
+  const [motionStatus, setMotionStatus] = useState<any>(null);
   const [wifiPassword, setWifiPassword] = useState("");
   const [selectedSsid, setSelectedSsid] = useState("");
   const [busy, setBusy] = useState(false);
@@ -61,6 +63,8 @@ export function SettingsScreen({
     setDevices(deviceValues);
     setSyncDiagnostics(syncValues);
     setInterfaces(interfaceValues.interfaces || []);
+    setNetworkInfo(interfaceValues);
+    setMotionStatus(deviceValues.motion_status || null);
     api<any>("/system/metrics").then(setMetrics).catch(() => undefined);
     api<any>("/system/update/status").then(setUpdateStatus).catch(() => undefined);
   };
@@ -79,6 +83,43 @@ export function SettingsScreen({
     };
   }, []);
 
+  useEffect(() => {
+    if (tab !== "hardware") return;
+    let stopped = false;
+    const refresh = () =>
+      api<any>("/hardware/motion")
+        .then((value) => {
+          if (!stopped) setMotionStatus(value);
+        })
+        .catch(() => undefined);
+    refresh();
+    const timer = window.setInterval(refresh, 600);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [tab]);
+
+  useEffect(() => {
+    if (tab !== "system") return;
+    const refresh = () =>
+      api<any>("/system/update/status")
+        .then((value) => {
+          setUpdateStatus(value);
+          if (
+            value.state === "complete" &&
+            window.sessionStorage.getItem("bodadash-update-pending") === "1"
+          ) {
+            window.sessionStorage.removeItem("bodadash-update-pending");
+            window.setTimeout(() => window.location.reload(), 700);
+          }
+        })
+        .catch(() => undefined);
+    refresh();
+    const timer = window.setInterval(refresh, 1500);
+    return () => window.clearInterval(timer);
+  }, [tab]);
+
   const save = async (values: Settings, message = "Settings saved") => {
     setBusy(true);
     try {
@@ -92,6 +133,23 @@ export function SettingsScreen({
       onToast(error.message);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const testAudio = async (kind: "timer_audio" | "alert_audio") => {
+    try {
+      const result = await api<any>("/hardware/test", {
+        method: "POST",
+        ...jsonBody({ kind })
+      });
+      setDevices((current: any) => ({ ...current, audio_status: result }));
+      onToast(
+        result.success
+          ? `Sound played through ${result.backend}`
+          : `Audio failed: ${result.last_error || "unknown playback error"}`
+      );
+    } catch (error: any) {
+      onToast(error.message);
     }
   };
 
@@ -677,6 +735,43 @@ export function SettingsScreen({
                   setSettings({ ...settings, motion_enabled: value })
                 }
               />
+              <div
+                class={`motion-indicator ${
+                  motionStatus?.error
+                    ? "error"
+                    : motionStatus?.active
+                      ? "active"
+                      : ""
+                }`}
+              >
+                <i />
+                <div>
+                  <strong>
+                    {motionStatus?.error
+                      ? "PIR needs attention"
+                      : motionStatus?.active
+                        ? "Motion detected"
+                        : motionStatus?.running
+                          ? "Watching for motion"
+                          : "PIR not running"}
+                  </strong>
+                  <small>
+                    {motionStatus?.error ||
+                      `BCM ${motionStatus?.pin ?? settings.motion_gpio_bcm}${
+                        motionStatus?.pin_factory
+                          ? ` · ${motionStatus.pin_factory}`
+                          : ""
+                      }`}
+                  </small>
+                </div>
+              </div>
+              <SettingToggle
+                label="Sensor output is active-high (HC-SR501 default)"
+                checked={settings.motion_active_high !== false}
+                onChange={(value) =>
+                  setSettings({ ...settings, motion_active_high: value })
+                }
+              />
               <label class="setting-number">
                 <span>BCM GPIO pin</span>
                 <input
@@ -831,30 +926,25 @@ export function SettingsScreen({
                 </select>
               </label>
               <p class="hint">
-                Raspberry Pi outputs are discovered through ALSA. Connect and
-                power the HDMI monitor before scanning if its output is missing,
+                “Desktop default” uses Raspberry Pi OS PipeWire first and falls
+                back to ALSA. Connect and power the HDMI monitor before scanning,
                 then save before testing sound.
               </p>
+              {devices.audio_status?.last_error && (
+                <p class="hardware-test-result error">
+                  Last audio error: {devices.audio_status.last_error}
+                </p>
+              )}
               <div class="button-row">
                 <button
                   class="button secondary"
-                  onClick={() =>
-                    api("/hardware/test", {
-                      method: "POST",
-                      ...jsonBody({ kind: "timer_audio" })
-                    })
-                  }
+                  onClick={() => testAudio("timer_audio")}
                 >
                   Test timer sound
                 </button>
                 <button
                   class="button secondary"
-                  onClick={() =>
-                    api("/hardware/test", {
-                      method: "POST",
-                      ...jsonBody({ kind: "alert_audio" })
-                    })
-                  }
+                  onClick={() => testAudio("alert_audio")}
                 >
                   Test emergency sound
                 </button>
@@ -889,6 +979,7 @@ export function SettingsScreen({
                   save({
                     motion_enabled: settings.motion_enabled,
                     motion_gpio_bcm: settings.motion_gpio_bcm,
+                    motion_active_high: settings.motion_active_high !== false,
                     motion_timeout_seconds: settings.motion_timeout_seconds,
                     display_sleep_mode: settings.display_sleep_mode,
                     scanner_device: settings.scanner_device,
@@ -934,7 +1025,11 @@ export function SettingsScreen({
         {tab === "network" && (
           <>
           <SettingsCard title="Mobile Dash address">
-            <p>Choose the local or VPN address shown in the home-screen reminder.</p>
+            <p>
+              Choose the local or VPN address shown in the home-screen reminder.
+              BodaDash listens on every active interface, so changing this choice
+              takes effect immediately and does not require a reboot.
+            </p>
             <label class="settings-field">
               <span>Displayed IPv4 address</span>
               <select
@@ -952,6 +1047,11 @@ export function SettingsScreen({
               </select>
             </label>
             {!interfaces.length && <p class="hint">No active non-loopback IPv4 addresses were found.</p>}
+            {networkInfo?.listening_host === "0.0.0.0" && (
+              <p class="hardware-test-result">
+                Mobile server active on all listed IPv4 addresses · port {networkInfo.port}
+              </p>
+            )}
           </SettingsCard>
           <SettingsCard title="Wi-Fi">
             <button
@@ -1195,6 +1295,7 @@ export function SettingsScreen({
                   onClick={async () => {
                     try {
                       const result = await api<any>("/system/update", { method: "POST" });
+                      window.sessionStorage.setItem("bodadash-update-pending", "1");
                       setUpdateStatus({ state: "running", message: result.message });
                       onToast("Update started. BodaDash will restart automatically.");
                     } catch (error: any) {

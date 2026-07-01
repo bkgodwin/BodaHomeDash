@@ -125,12 +125,15 @@ def refresh_kiosk_launcher() -> None:
     if not source.is_file():
         return
     target = Path.home() / ".local/bin/home-dashboard-kiosk"
+    temporary = target.with_name(f".{target.name}.new")
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, target)
-        target.chmod(0o755)
+        shutil.copy2(source, temporary)
+        temporary.chmod(0o755)
+        temporary.replace(target)
     except OSError:
         logger.exception("Could not refresh the kiosk launcher")
+        temporary.unlink(missing_ok=True)
 
 
 @asynccontextmanager
@@ -223,10 +226,16 @@ def status(request: Request) -> dict[str, Any]:
 
 @app.get("/api/v1/network/interfaces")
 def network_interfaces():
+    selected = database.setting("mobile_dash_ipv4", "")
+    available = ipv4_interfaces()
     return {
-        "interfaces": ipv4_interfaces(),
-        "selected": database.setting("mobile_dash_ipv4", ""),
+        "interfaces": available,
+        "selected": selected,
         "port": config.port,
+        "listening_host": config.host,
+        "selected_available": not selected
+        or any(item["address"] == selected for item in available),
+        "restart_required": False,
     }
 
 
@@ -1471,15 +1480,26 @@ def hardware_devices():
         ),
         "audio_outputs": AudioController.outputs(),
         "audio_output": database.setting("audio_output", "default"),
+        "audio_status": services.audio.status(),
+        "motion_status": services.pir_status(),
     }
+
+
+@app.get("/api/v1/hardware/motion")
+def hardware_motion_status():
+    return services.pir_status()
 
 
 @app.post("/api/v1/hardware/test")
 async def hardware_test(payload: HardwareTest):
     if payload.kind == "timer_audio":
-        return {"success": services.audio.play("timer", database.setting("timer_volume", 60))}
+        return services.audio.probe(
+            "timer", int(database.setting("timer_volume", 60))
+        )
     if payload.kind == "alert_audio":
-        return {"success": services.audio.play("alert", database.setting("alert_volume", 55))}
+        return services.audio.probe(
+            "alert", int(database.setting("alert_volume", 55))
+        )
     if payload.kind == "display_off":
         return {"success": services.display.off()}
     if payload.kind == "display_on":
@@ -1681,19 +1701,14 @@ def exit_kiosk():
             "supported": False,
             "message": "Exit to desktop is available on the Raspberry Pi kiosk.",
         }
-    runtime_dir = Path(
-        os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
-    )
-    if not runtime_dir.is_dir():
-        raise HTTPException(status_code=500, detail="Desktop runtime directory is unavailable")
-    marker = runtime_dir / "home-dashboard-kiosk.exit"
+    marker = config.data_dir / "kiosk-exit-requested"
     marker.write_text("exit\n", encoding="utf-8")
 
     def close_browser() -> None:
         # Stop the session launcher too, so this works immediately on a Pi
         # upgrading from a release whose launcher did not understand the marker.
         subprocess.run(
-            ["pkill", "-TERM", "-f", "/home-dashboard-kiosk"],
+            ["pkill", "-TERM", "-f", "[h]ome-dashboard-kiosk"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             timeout=5,

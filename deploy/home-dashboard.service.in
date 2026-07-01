@@ -14,7 +14,10 @@ Environment=HOME_DASHBOARD_HOST=0.0.0.0
 Environment=HOME_DASHBOARD_PORT=8765
 Environment=PYTHONUNBUFFERED=1
 Environment=XDG_RUNTIME_DIR=/run/user/@UID@
+Environment=PIPEWIRE_RUNTIME_DIR=/run/user/@UID@
+Environment=PULSE_RUNTIME_PATH=/run/user/@UID@/pulse
 Environment=WAYLAND_DISPLAY=wayland-1
+Environment=GPIOZERO_PIN_FACTORY=lgpio
 ExecStart=/opt/home-dashboard/.venv/bin/home-dashboard
 Restart=always
 RestartSec=3
@@ -23,7 +26,7 @@ TimeoutStopSec=20
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/var/lib/home-dashboard
+ReadWritePaths=/var/lib/home-dashboard @HOME@/.local/bin
 
 [Install]
 WantedBy=multi-user.target

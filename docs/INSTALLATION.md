@@ -35,8 +35,8 @@ sudo reboot
 
 The installer:
 
-- installs Python, Chromium, Wayland display tools, ALSA, NetworkManager,
-  SWIG, and GPIO build dependencies;
+- installs Python, Chromium, Wayland display tools, PipeWire/ALSA utilities,
+  NetworkManager, SWIG, and GPIO build dependencies;
 - copies the application to `/opt/home-dashboard`;
 - creates a virtual environment and installs the backend;
 - creates persistent storage at `/var/lib/home-dashboard`;
@@ -66,7 +66,9 @@ The kiosk opens a guided wizard:
 Encrypted USB backups remain optional and can be enabled later.
 
 The Hardware settings page can select an ALSA audio output for the monitor
-speakers. The System settings page can close Chromium and return to the
+speakers; the recommended default follows the Raspberry Pi OS desktop
+PipeWire output. It also shows live PIR state and GPIO initialization errors.
+The System settings page can close Chromium and return to the
 Raspberry Pi desktop for the current session. The kiosk starts normally again
 after the next reboot.
 
@@ -89,6 +91,10 @@ transit.
 
 Application and Raspberry Pi OS updates are intentionally manual. After
 replacing the source tree with a tested version, rerun the installer and reboot.
+
+The in-app updater records the exact failing command in System settings if an
+update cannot complete. `journalctl -u home-dashboard-update.service` contains
+the full update log.
 
 Useful commands:
 

@@ -13,6 +13,7 @@ export interface Status {
   background_preview: string;
   display_awake_lock: boolean;
   mobile_dash_address: string;
+  platform: string;
   time: string;
 }
 

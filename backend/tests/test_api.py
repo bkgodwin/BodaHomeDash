@@ -190,6 +190,22 @@ def test_sync_diagnostics_endpoint(client):
     assert {"providers", "log"} <= response.json().keys()
 
 
+def test_pi_diagnostic_shapes(client):
+    hardware = client.get("/api/v1/hardware/devices")
+    assert hardware.status_code == 200
+    assert {"audio_status", "motion_status"} <= hardware.json().keys()
+    assert {
+        "enabled",
+        "running",
+        "active",
+        "pin",
+        "error",
+    } <= client.get("/api/v1/hardware/motion").json().keys()
+    network = client.get("/api/v1/network/interfaces").json()
+    assert network["listening_host"] == "0.0.0.0"
+    assert network["restart_required"] is False
+
+
 def test_fifo_consume_batch_notes_and_selected_batch_delete(client):
     first = client.post(
         "/api/v1/pantry",

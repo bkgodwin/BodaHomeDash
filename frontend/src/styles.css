@@ -2279,6 +2279,132 @@ select:focus-visible {
   overscroll-behavior: contain;
 }
 
+.motion-indicator {
+  min-height: 62px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 8px 0;
+  padding: 10px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 15px;
+  background: rgba(4, 22, 39, 0.28);
+}
+
+.motion-indicator i {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  border-radius: 50%;
+  background: #8292a0;
+  box-shadow: 0 0 0 6px rgba(130, 146, 160, 0.12);
+}
+
+.motion-indicator.active {
+  border-color: rgba(101, 226, 157, 0.7);
+  background: rgba(32, 121, 73, 0.22);
+}
+
+.motion-indicator.active i {
+  background: #71e6a5;
+  box-shadow: 0 0 0 7px rgba(113, 230, 165, 0.18), 0 0 18px #71e6a5;
+}
+
+.motion-indicator.error {
+  border-color: rgba(255, 112, 112, 0.68);
+  background: rgba(142, 39, 46, 0.22);
+}
+
+.motion-indicator.error i {
+  background: #ff7070;
+}
+
+.motion-indicator div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.motion-indicator small {
+  color: var(--text-muted);
+}
+
+.hardware-test-result.error {
+  color: #ffd0d0;
+  border-color: rgba(255, 112, 112, 0.5);
+}
+
+/*
+ * Pi kiosk touch fallback. Some USB panels are exposed by Chromium as mouse
+ * pointers, so native kinetic scrolling never starts. The app handles the drag
+ * while this class is active.
+ */
+.kiosk-drag-scroll .app-shell,
+.kiosk-drag-scroll .screen-host {
+  touch-action: none;
+}
+
+.kiosk-drag-scroll .drag-scrolling {
+  scroll-behavior: auto !important;
+  cursor: grabbing;
+}
+
+.kiosk-drag-scroll .home-screen {
+  grid-template-rows: minmax(0, 1fr) 212px 52px;
+}
+
+.kiosk-drag-scroll .button {
+  min-height: 56px;
+  padding-inline: 22px;
+  font-size: 1rem;
+}
+
+.kiosk-drag-scroll .main-nav button {
+  min-height: 76px;
+  font-size: 0.76rem;
+}
+
+.kiosk-drag-scroll .main-nav button span {
+  font-size: 1.65rem;
+}
+
+.kiosk-drag-scroll .settings-tabs button {
+  min-height: 50px;
+  padding-inline: 18px;
+  font-size: 0.95rem;
+}
+
+.kiosk-drag-scroll .setting-toggle,
+.kiosk-drag-scroll .setting-number,
+.kiosk-drag-scroll .setting-select,
+.kiosk-drag-scroll .calendar-setting-row {
+  min-height: 62px;
+}
+
+.kiosk-drag-scroll .setting-number input,
+.kiosk-drag-scroll .setting-select select,
+.kiosk-drag-scroll .settings-field input,
+.kiosk-drag-scroll .settings-field select {
+  min-height: 48px;
+}
+
+.kiosk-drag-scroll .icon-button,
+.kiosk-drag-scroll .favorite-button,
+.kiosk-drag-scroll .reminder-drag-handle,
+.kiosk-drag-scroll .priority-button {
+  min-width: 50px;
+  width: 50px;
+  height: 50px;
+  flex-basis: 50px;
+}
+
+.kiosk-drag-scroll .clock-button,
+.kiosk-drag-scroll .refresh-button,
+.kiosk-drag-scroll .scan-button,
+.kiosk-drag-scroll .running-timers button {
+  height: 46px;
+}
+
 .settings-divider {
   height: 1px;
   margin: 18px 0;

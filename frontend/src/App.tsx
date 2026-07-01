@@ -14,6 +14,7 @@ import { ShoppingScreen } from "./screens/ShoppingScreen";
 import { WeatherScreen } from "./screens/WeatherScreen";
 import { backgroundAtmosphere, timeOfDayTheme } from "./theme";
 import { onScreenKeyboardEnabled } from "./inputPreferences";
+import { installKioskDragScroll } from "./kioskDragScroll";
 import {
   installScannerCapture,
   scannerQuickMode,
@@ -114,6 +115,11 @@ export function App() {
       if (toastTimer.current) window.clearTimeout(toastTimer.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (!status?.local || status.platform !== "Linux") return;
+    return installKioskDragScroll();
+  }, [status?.local, status?.platform]);
 
   useEffect(() => {
     if (!status?.authenticated) return;

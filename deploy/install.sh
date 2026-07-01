@@ -25,7 +25,7 @@ echo "[1/8] Installing Raspberry Pi packages..."
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y \
   python3 python3-venv python3-pip python3-dev build-essential \
-  chromium curl git rsync swig wlr-randr alsa-utils network-manager \
+  chromium curl git rsync swig wlr-randr alsa-utils pipewire-bin network-manager \
   liblgpio-dev
 
 echo "[2/8] Installing Home Dashboard..."
@@ -72,6 +72,7 @@ echo "[5/8] Installing the system service..."
 sed \
   -e "s/@USER@/$TARGET_USER/g" \
   -e "s/@UID@/$TARGET_UID/g" \
+  -e "s|@HOME@|$TARGET_HOME|g" \
   /opt/home-dashboard/deploy/home-dashboard.service.in \
   >/etc/systemd/system/home-dashboard.service
 systemctl daemon-reload

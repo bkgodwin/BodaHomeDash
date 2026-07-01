@@ -83,6 +83,7 @@ class DashboardServices:
             asyncio.create_task(self._periodic("calendar", self.sync_calendars)),
             asyncio.create_task(self._timer_loop()),
             asyncio.create_task(self._display_loop()),
+            asyncio.create_task(self._pir_loop()),
             asyncio.create_task(self._backup_loop()),
         ]
 
@@ -103,7 +104,8 @@ class DashboardServices:
                 bool(self.database.setting("motion_active_high", True)),
                 self.motion,
             )
-            self.pir.start()
+            if not self.pir.start():
+                logger.error("PIR initialization failed: %s", self.pir.error)
         scanner_path = self.database.setting("scanner_device", "")
         if scanner_path:
             self.scanner = BarcodeMonitor(scanner_path, self.scanned)
@@ -119,6 +121,35 @@ class DashboardServices:
         self.display.output = self.database.setting("display_output", "HDMI-A-1")
         self.audio.output = self.database.setting("audio_output", "default")
         self._start_hardware()
+
+    def pir_status(self) -> dict[str, object]:
+        if not self.database.setting("motion_enabled", True):
+            return {
+                "enabled": False,
+                "running": False,
+                "active": False,
+                "pin": int(self.database.setting("motion_gpio_bcm", 17)),
+                "active_high": bool(
+                    self.database.setting("motion_active_high", True)
+                ),
+                "pin_factory": "",
+                "last_motion_at": None,
+                "error": "",
+            }
+        if not self.pir:
+            return {
+                "enabled": True,
+                "running": False,
+                "active": False,
+                "pin": int(self.database.setting("motion_gpio_bcm", 17)),
+                "active_high": bool(
+                    self.database.setting("motion_active_high", True)
+                ),
+                "pin_factory": "",
+                "last_motion_at": None,
+                "error": "PIR monitor was not initialized",
+            }
+        return self.pir.status()
 
     async def _periodic(self, kind: str, operation) -> None:
         intervals = {
@@ -602,6 +633,12 @@ class DashboardServices:
                     self.display.off()
                 self.display_asleep = True
                 await self.hub.broadcast("display.sleep", {"mode": mode})
+
+    async def _pir_loop(self) -> None:
+        while True:
+            await asyncio.sleep(0.25)
+            if self.pir and self.pir.running:
+                self.pir.poll()
 
     async def _timer_loop(self) -> None:
         while True:

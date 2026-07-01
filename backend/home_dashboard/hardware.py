@@ -5,6 +5,7 @@ import os
 import platform
 import json
 import re
+import shutil
 import struct
 import subprocess
 import tempfile
@@ -48,10 +49,13 @@ class AudioController:
         self.output = output
         self._stops: dict[str, threading.Event] = {}
         self._lock = threading.Lock()
+        self.last_backend = ""
+        self.last_error = ""
+        self.last_success_at: float | None = None
 
     @staticmethod
     def outputs() -> list[dict[str, str]]:
-        outputs = [{"id": "default", "name": "System default"}]
+        outputs = [{"id": "default", "name": "Desktop default (recommended)"}]
         if platform.system() != "Linux":
             return outputs
         try:
@@ -84,6 +88,23 @@ class AudioController:
         except Exception:
             pass
         return outputs
+
+    def status(self) -> dict[str, object]:
+        return {
+            "output": self.output,
+            "backend": self.last_backend or (
+                "pipewire" if platform.system() == "Linux" and shutil.which("pw-play")
+                else "alsa" if platform.system() == "Linux"
+                else "winsound" if platform.system() == "Windows"
+                else "unavailable"
+            ),
+            "last_error": self.last_error,
+            "last_success_at": self.last_success_at,
+        }
+
+    def probe(self, kind: str, volume: int) -> dict[str, object]:
+        success = self._play_once(kind, volume)
+        return {"success": success, **self.status()}
 
     def play(self, kind: str = "timer", volume: int = 60) -> bool:
         return self.play_bursts(kind, volume, [1])
@@ -166,7 +187,7 @@ class AudioController:
                 if self._stops.get(key) is stop:
                     self._stops.pop(key, None)
 
-    def _play_once(self, kind: str, volume: int) -> None:
+    def _play_once(self, kind: str, volume: int) -> bool:
         frequency = 660 if kind == "timer" else 523
         notes = [(frequency, 0.20), (frequency * 1.25, 0.24)]
         path = self._tone(notes, volume)
@@ -177,25 +198,66 @@ class AudioController:
                 winsound.PlaySound(
                     str(path), winsound.SND_FILENAME | winsound.SND_NODEFAULT
                 )
+                self.last_backend = "winsound"
+                self.last_error = ""
+                self.last_success_at = time.time()
+                return True
+            if platform.system() != "Linux":
+                self.last_error = "No supported audio backend is available"
+                return False
+
+            commands: list[tuple[str, list[str]]] = []
+            if self.output == "default":
+                if shutil.which("pw-play"):
+                    commands.append(("pipewire", ["pw-play", str(path)]))
+                if shutil.which("paplay"):
+                    commands.append(("pulseaudio", ["paplay", str(path)]))
+                commands.append(("alsa", ["aplay", "-q", str(path)]))
             else:
-                command = ["aplay", "-q"]
-                if self.output and self.output != "default":
-                    command.extend(["-D", self.output])
-                command.append(str(path))
-                subprocess.run(
-                    command,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    timeout=8,
-                    check=False,
+                commands.append(
+                    ("alsa", ["aplay", "-q", "-D", self.output, str(path)])
                 )
+
+            errors: list[str] = []
+            environment = os.environ.copy()
+            environment.setdefault(
+                "PIPEWIRE_RUNTIME_DIR",
+                environment.get(
+                    "XDG_RUNTIME_DIR",
+                    f"/run/user/{getattr(os, 'getuid', lambda: 0)()}",
+                ),
+            )
+            for backend, command in commands:
+                try:
+                    result = subprocess.run(
+                        command,
+                        env=environment,
+                        capture_output=True,
+                        text=True,
+                        timeout=8,
+                        check=False,
+                    )
+                    if result.returncode == 0:
+                        self.last_backend = backend
+                        self.last_error = ""
+                        self.last_success_at = time.time()
+                        return True
+                    detail = (result.stderr or result.stdout).strip()
+                    errors.append(f"{backend}: {detail or f'exit {result.returncode}'}")
+                except Exception as error:
+                    errors.append(f"{backend}: {error}")
+            self.last_error = "; ".join(errors) or "Audio playback failed"
+            return False
+        except Exception as error:
+            self.last_error = str(error)
+            return False
         finally:
             path.unlink(missing_ok=True)
 
     @staticmethod
     def _tone(notes: list[tuple[float, float]], volume: int) -> Path:
         rate = 44100
-        amplitude = int(32767 * min(max(volume, 0), 100) / 100 * 0.28)
+        amplitude = int(32767 * min(max(volume, 0), 100) / 100 * 0.42)
         samples: list[int] = []
         for frequency, duration in notes:
             count = int(rate * duration)
@@ -231,33 +293,81 @@ class PIRMonitor:
         self.active_high = active_high
         self.on_motion = on_motion
         self.sensor = None
+        self.running = False
+        self.active = False
+        self.last_motion_at: float | None = None
+        self.error = ""
+        self.pin_factory = ""
 
     def start(self) -> bool:
         if platform.system() != "Linux":
+            self.error = "PIR monitoring is only available on Linux"
             return False
         try:
-            if self.active_high:
-                from gpiozero import MotionSensor
+            from gpiozero import DigitalInputDevice
 
-                self.sensor = MotionSensor(
-                    self.pin,
-                    queue_len=3,
-                    sample_rate=10,
-                )
-                self.sensor.when_motion = self.on_motion
-            else:
-                from gpiozero import Button
-
-                self.sensor = Button(self.pin, pull_up=True, bounce_time=0.1)
-                self.sensor.when_pressed = self.on_motion
+            self.sensor = DigitalInputDevice(
+                self.pin,
+                pull_up=not self.active_high,
+                bounce_time=0.05,
+            )
+            self.sensor.when_activated = self._activated
+            self.sensor.when_deactivated = self._deactivated
+            initially_active = bool(self.sensor.is_active)
+            self.active = False
+            self.pin_factory = self.sensor.pin_factory.__class__.__name__
+            self.running = True
+            self.error = ""
+            if initially_active:
+                self._activated()
             return True
-        except Exception:
+        except Exception as error:
+            self.error = str(error)
+            self.running = False
             return False
 
     def stop(self) -> None:
         if self.sensor:
             self.sensor.close()
             self.sensor = None
+        self.running = False
+        self.active = False
+
+    def _activated(self) -> None:
+        was_active = self.active
+        self.active = True
+        if not was_active:
+            self.last_motion_at = time.time()
+            self.on_motion()
+
+    def _deactivated(self) -> None:
+        self.active = False
+
+    def poll(self) -> bool:
+        if not self.sensor:
+            return False
+        try:
+            detected = bool(self.sensor.is_active)
+            if detected:
+                self._activated()
+            else:
+                self._deactivated()
+            return detected
+        except Exception as error:
+            self.error = str(error)
+            return False
+
+    def status(self) -> dict[str, object]:
+        return {
+            "enabled": True,
+            "running": self.running,
+            "active": self.poll() if self.running else False,
+            "pin": self.pin,
+            "active_high": self.active_high,
+            "pin_factory": self.pin_factory,
+            "last_motion_at": self.last_motion_at,
+            "error": self.error,
+        }
 
 
 class BarcodeMonitor:
