@@ -7,8 +7,8 @@ const COLORS = {
   nightBottom: "#102b50",
   orangeTop: "#d96a44",
   orangeBottom: "#806175",
-  dayTop: "#5daee8",
-  dayBottom: "#91c8e9"
+  dayTop: "#438fc6",
+  dayBottom: "#79b4d8"
 };
 
 function rgb(value: string): Rgb {

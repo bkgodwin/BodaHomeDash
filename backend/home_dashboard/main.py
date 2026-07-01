@@ -55,6 +55,7 @@ from .models import (
     PlannerChoreMembers,
     PlannerChoreMove,
     PlannerMealInput,
+    PlannerMealMove,
     PlannerNoteInput,
     ReminderCreate,
     ReminderReorder,
@@ -385,12 +386,13 @@ def calendar_range(
 
 
 def _week_start(value: date) -> date:
-    return value - timedelta(days=value.weekday())
+    # Python numbers Monday as zero; the household planner is Sunday-first.
+    return value - timedelta(days=(value.weekday() + 1) % 7)
 
 
 def _planner_chore(chore: dict[str, Any], week: date) -> dict[str, Any]:
     planned = (
-        week + timedelta(days=int(chore["weekday"]))
+        week + timedelta(days=(int(chore["weekday"]) + 1) % 7)
         if chore["recurring"]
         else date.fromisoformat(chore["scheduled_date"])
     )
@@ -540,6 +542,64 @@ async def delete_planner_meal(meal_id: int):
         raise HTTPException(status_code=404, detail="Planned meal not found")
     await hub.broadcast("planner.updated", {"scope": "meals"})
     return Response(status_code=204)
+
+
+@app.put("/api/v1/planner/meals/{meal_id}/move")
+async def move_planner_meal(meal_id: int, payload: PlannerMealMove):
+    meal = database.one("SELECT * FROM planner_meals WHERE id=?", (meal_id,))
+    if not meal:
+        raise HTTPException(status_code=404, detail="Planned meal not found")
+    old_date = meal["planned_date"]
+    new_date = payload.planned_date.isoformat()
+    with database.transaction() as connection:
+        if old_date == new_date:
+            ordered = [
+                row["id"]
+                for row in connection.execute(
+                    """SELECT id FROM planner_meals
+                       WHERE planned_date=? ORDER BY position,id""",
+                    (old_date,),
+                ).fetchall()
+            ]
+            ordered.remove(meal_id)
+            ordered.insert(min(payload.position, len(ordered)), meal_id)
+            for position, item_id in enumerate(ordered):
+                connection.execute(
+                    "UPDATE planner_meals SET position=?,updated_at=? WHERE id=?",
+                    (position, utcnow(), item_id),
+                )
+        else:
+            old_order = [
+                row["id"]
+                for row in connection.execute(
+                    """SELECT id FROM planner_meals
+                       WHERE planned_date=? AND id<>? ORDER BY position,id""",
+                    (old_date, meal_id),
+                ).fetchall()
+            ]
+            new_order = [
+                row["id"]
+                for row in connection.execute(
+                    """SELECT id FROM planner_meals
+                       WHERE planned_date=? ORDER BY position,id""",
+                    (new_date,),
+                ).fetchall()
+            ]
+            new_order.insert(min(payload.position, len(new_order)), meal_id)
+            now = utcnow()
+            for position, item_id in enumerate(old_order):
+                connection.execute(
+                    "UPDATE planner_meals SET position=?,updated_at=? WHERE id=?",
+                    (position, now, item_id),
+                )
+            for position, item_id in enumerate(new_order):
+                connection.execute(
+                    """UPDATE planner_meals
+                       SET planned_date=?,position=?,updated_at=? WHERE id=?""",
+                    (new_date, position, now, item_id),
+                )
+    await hub.broadcast("planner.updated", {"scope": "meals"})
+    return database.one("SELECT * FROM planner_meals WHERE id=?", (meal_id,))
 
 
 @app.post("/api/v1/planner/chores")

@@ -8,8 +8,8 @@ describe("time-of-day theme", () => {
 
   it("uses a light daytime palette", () => {
     expect(timeOfDayTheme(new Date(2026, 5, 29, 12), null)).toEqual([
-      "#5daee8",
-      "#91c8e9"
+      "#438fc6",
+      "#79b4d8"
     ]);
   });
 

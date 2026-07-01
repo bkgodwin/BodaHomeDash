@@ -12,6 +12,8 @@ interface Props {
   onViewingChange: (viewing: boolean) => void;
   openRecipeId?: string | null;
   onExternalRecipeOpened?: () => void;
+  externalBackLabel?: string;
+  onExternalBack?: () => void;
 }
 
 export function RecipesScreen({
@@ -20,7 +22,9 @@ export function RecipesScreen({
   onToast,
   onViewingChange,
   openRecipeId,
-  onExternalRecipeOpened
+  onExternalRecipeOpened,
+  externalBackLabel,
+  onExternalBack
 }: Props) {
   const [query, setQuery] = useState("");
   const [searchMode, setSearchMode] = useState<"name" | "ingredient">("name");
@@ -114,7 +118,15 @@ export function RecipesScreen({
     return (
       <main class="page-screen glass recipe-detail-screen">
         <header class="page-header recipe-detail-header">
-          <button class="button secondary" onClick={() => setSelected(null)}>← Recipes</button>
+          <button
+            class="button secondary"
+            onClick={() => {
+              setSelected(null);
+              onExternalBack?.();
+            }}
+          >
+            ← {externalBackLabel || "Recipes"}
+          </button>
           <div>
             <h1>{selected.title}</h1>
             <p>{[selected.category, selected.area].filter(Boolean).join(" · ") || "Custom recipe"}</p>

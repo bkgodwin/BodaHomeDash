@@ -73,6 +73,7 @@ export function App() {
   const [cameraScanOpen, setCameraScanOpen] = useState(false);
   const [notepadOpen, setNotepadOpen] = useState(false);
   const [recipeToOpen, setRecipeToOpen] = useState<string | null>(null);
+  const [recipeReturnToWeek, setRecipeReturnToWeek] = useState(false);
   const recipeWakeHeld = useRef(false);
 
   const showToast = (message: string) => {
@@ -342,7 +343,10 @@ export function App() {
         </button>
         <button
           class={screen === "recipes" ? "active" : ""}
-          onClick={() => setScreen("recipes")}
+          onClick={() => {
+            setRecipeReturnToWeek(false);
+            setScreen("recipes");
+          }}
         >
           <span>♨</span> Recipes
         </button>
@@ -402,6 +406,7 @@ export function App() {
             onToast={showToast}
             onOpenRecipe={(recipeId) => {
               setRecipeToOpen(recipeId);
+              setRecipeReturnToWeek(true);
               setScreen("recipes");
             }}
           />
@@ -422,6 +427,15 @@ export function App() {
             onToast={showToast}
             openRecipeId={recipeToOpen}
             onExternalRecipeOpened={() => setRecipeToOpen(null)}
+            externalBackLabel={recipeReturnToWeek ? "Week Planner" : undefined}
+            onExternalBack={
+              recipeReturnToWeek
+                ? () => {
+                    setRecipeReturnToWeek(false);
+                    setScreen("week");
+                  }
+                : undefined
+            }
             onViewingChange={async (viewing) => {
               if (!status.local) return;
               try {

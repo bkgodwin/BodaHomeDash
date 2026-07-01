@@ -152,6 +152,11 @@ class PlannerMealInput(BaseModel):
         return " ".join(value.split())
 
 
+class PlannerMealMove(BaseModel):
+    planned_date: date
+    position: int = Field(default=0, ge=0)
+
+
 class PlannerChoreInput(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     color: str = Field(default="#A7D8F0", pattern=r"^#[0-9a-fA-F]{6}$")

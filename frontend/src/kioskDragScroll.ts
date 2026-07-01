@@ -42,7 +42,7 @@ export function installKioskDragScroll(): () => void {
     if (!(origin instanceof Element)) return;
     if (
       origin.closest(
-        "input, textarea, select, [contenteditable=true], .leaflet-container, .reminder-drag-handle, .planner-hold-handle"
+        "input, textarea, select, [contenteditable=true], .leaflet-container, .reminder-drag-handle, .planner-hold-handle, [data-planner-draggable]"
       )
     ) {
       return;

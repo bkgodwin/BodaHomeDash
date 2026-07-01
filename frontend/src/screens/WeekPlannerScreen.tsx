@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { api, jsonBody } from "../api";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Modal } from "../components/Modal";
-import { TouchInput } from "../components/TouchInput";
+import { TouchKeyboard } from "../components/TouchKeyboard";
+import { onScreenKeyboardEnabled } from "../inputPreferences";
 import {
   CalendarData,
   CalendarEvent,
@@ -24,6 +25,7 @@ interface Props {
 }
 
 type DragPayload =
+  | { kind: "meal"; meal: PlannerMeal }
   | { kind: "chore"; chore: PlannerChore }
   | {
       kind: "member";
@@ -45,10 +47,10 @@ function dateAtNoon(value: string): Date {
   return new Date(`${value}T12:00:00`);
 }
 
-function monday(value = new Date()): string {
+function sunday(value = new Date()): string {
   const result = new Date(value);
   result.setHours(12, 0, 0, 0);
-  result.setDate(result.getDate() - ((result.getDay() + 6) % 7));
+  result.setDate(result.getDate() - result.getDay());
   return localDate(result);
 }
 
@@ -87,7 +89,7 @@ export function WeekPlannerScreen({
   onToast,
   onOpenRecipe
 }: Props) {
-  const [weekStart, setWeekStart] = useState(() => monday());
+  const [weekStart, setWeekStart] = useState(() => sunday());
   const [planner, setPlanner] = useState<PlannerWeek | null>(null);
   const [calendar, setCalendar] = useState<CalendarData>({
     events: [],
@@ -105,6 +107,9 @@ export function WeekPlannerScreen({
     x: number;
     y: number;
   } | null>(null);
+  const weekScroller = useRef<HTMLDivElement>(null);
+  const positionedWeek = useRef("");
+  const suppressMealClick = useRef(false);
 
   const days = useMemo(
     () => Array.from({ length: 7 }, (_, index) => addDays(weekStart, index)),
@@ -133,6 +138,34 @@ export function WeekPlannerScreen({
     load();
   }, [weekStart, refreshToken]);
 
+  useEffect(() => {
+    if (!planner || positionedWeek.current === weekStart) return;
+    positionedWeek.current = weekStart;
+    window.requestAnimationFrame(() => {
+      const scroller = weekScroller.current;
+      if (!scroller) return;
+      const today = localDate();
+      if (!days.includes(today)) {
+        scroller.scrollLeft = 0;
+        return;
+      }
+      const weekday = dateAtNoon(today).getDay();
+      if (weekday === 0) scroller.scrollLeft = 0;
+      else if (weekday === 6) scroller.scrollLeft = scroller.scrollWidth;
+      else {
+        const target = scroller.querySelector<HTMLElement>(
+          `[data-planner-date="${today}"]`
+        );
+        if (target) {
+          scroller.scrollLeft =
+            target.offsetLeft -
+            scroller.offsetLeft -
+            (scroller.clientWidth - target.clientWidth) / 2;
+        }
+      }
+    });
+  }, [planner?.start, weekStart]);
+
   const updateMembers = async (chore: PlannerChore, memberIds: number[]) => {
     await api(`/planner/chores/${chore.id}/members`, {
       method: "PUT",
@@ -148,6 +181,34 @@ export function WeekPlannerScreen({
   ) => {
     const target = document.elementFromPoint(x, y) as HTMLElement | null;
     try {
+      if (payload.kind === "meal") {
+        const day = target?.closest<HTMLElement>("[data-planner-date]")?.dataset
+          .plannerDate;
+        if (!day) return;
+        const targetMeal = target?.closest<HTMLElement>("[data-meal-id]");
+        const dayMeals =
+          planner?.meals
+            .filter((item) => item.planned_date === day)
+            .sort((left, right) => left.position - right.position) || [];
+        let position = targetMeal
+          ? dayMeals.findIndex(
+              (item) => item.id === Number(targetMeal.dataset.mealId)
+            )
+          : dayMeals.length;
+        if (position < 0) position = dayMeals.length;
+        if (day === payload.meal.planned_date) {
+          const oldPosition = dayMeals.findIndex((item) => item.id === payload.meal.id);
+          if (oldPosition >= 0 && oldPosition < position) position -= 1;
+          if (oldPosition === position) return;
+        }
+        await api(`/planner/meals/${payload.meal.id}/move`, {
+          method: "PUT",
+          ...jsonBody({ planned_date: day, position })
+        });
+        onToast(`Moved ${payload.meal.title}`);
+        await load();
+        return;
+      }
       if (payload.kind === "chore") {
         const day = target?.closest<HTMLElement>("[data-planner-date]")?.dataset
           .plannerDate;
@@ -238,7 +299,13 @@ export function WeekPlannerScreen({
       document.removeEventListener("pointermove", move, true);
       document.removeEventListener("pointerup", end, true);
       document.removeEventListener("pointercancel", end, true);
-      if (active) finishDrag(payload, endEvent.clientX, endEvent.clientY);
+      if (active) {
+        if (payload.kind === "meal") {
+          suppressMealClick.current = true;
+          window.setTimeout(() => (suppressMealClick.current = false), 220);
+        }
+        finishDrag(payload, endEvent.clientX, endEvent.clientY);
+      }
       setDrag(null);
     };
     document.addEventListener("pointermove", move, { capture: true, passive: false });
@@ -266,7 +333,7 @@ export function WeekPlannerScreen({
           <button class="button secondary" onClick={() => setWeekStart(addDays(weekStart, -7))}>
             ←
           </button>
-          <button class="button secondary" onClick={() => setWeekStart(monday())}>
+          <button class="button secondary" onClick={() => setWeekStart(sunday())}>
             This week
           </button>
           <button class="button secondary" onClick={() => setWeekStart(addDays(weekStart, 7))}>
@@ -297,7 +364,7 @@ export function WeekPlannerScreen({
         ))}
         <small>Hold and drag people onto chores</small>
       </div>
-      <div class="week-days">
+      <div class="week-days" ref={weekScroller}>
         {days.map((day) => {
           const date = dateAtNoon(day);
           const meals = planner?.meals.filter((item) => item.planned_date === day) || [];
@@ -363,8 +430,22 @@ export function WeekPlannerScreen({
                 {meals.length === 0 && <p class="planner-empty">Nothing planned</p>}
                 {meals.map((meal) => (
                   <article
-                    class={meal.recipe_id ? "recipe-meal" : ""}
-                    onClick={() => meal.recipe_id && onOpenRecipe(meal.recipe_id)}
+                    class={`${meal.recipe_id ? "recipe-meal" : ""} planner-draggable-card`}
+                    data-meal-id={meal.id}
+                    data-planner-draggable
+                    onPointerDown={(event) => {
+                      if ((event.target as HTMLElement).closest("button")) return;
+                      beginHold(event as unknown as PointerEvent, {
+                        kind: "meal",
+                        meal
+                      });
+                    }}
+                    onClick={() => {
+                      if (!suppressMealClick.current && meal.recipe_id) {
+                        onOpenRecipe(meal.recipe_id);
+                      }
+                    }}
+                    title="Hold for one second, then drag to reorder or move"
                   >
                     {meal.display_image || meal.image_url ? (
                       <img src={meal.display_image || meal.image_url} alt="" loading="lazy" />
@@ -390,9 +471,23 @@ export function WeekPlannerScreen({
                 {chores.length === 0 && <p class="planner-empty">No chores</p>}
                 {chores.map((chore) => (
                   <article
-                    class={chore.completed ? "completed" : ""}
+                    class={`${chore.completed ? "completed" : ""} planner-draggable-card`}
                     data-chore-id={chore.id}
+                    data-planner-draggable
                     style={{ "--chore-color": chore.color || "#A7D8F0" }}
+                    onPointerDown={(event) => {
+                      if (
+                        (event.target as HTMLElement).closest(
+                          "input, button, .planner-member-chip"
+                        )
+                      )
+                        return;
+                      beginHold(event as unknown as PointerEvent, {
+                        kind: "chore",
+                        chore
+                      });
+                    }}
+                    title="Hold anywhere on the chore for one second, then drag"
                   >
                     <label>
                       <input
@@ -411,18 +506,6 @@ export function WeekPlannerScreen({
                         <small>{chore.recurring ? "Repeats weekly" : "One time"}</small>
                       </span>
                     </label>
-                    <button
-                      class="planner-chore-grip planner-hold-handle"
-                      onPointerDown={(event) =>
-                        beginHold(event as unknown as PointerEvent, {
-                          kind: "chore",
-                          chore
-                        })
-                      }
-                      title="Hold for one second, then drag to another day"
-                    >
-                      ⠿
-                    </button>
                     <button
                       class="planner-delete"
                       onClick={() => setDeleteChore(chore)}
@@ -528,6 +611,8 @@ export function WeekPlannerScreen({
         <div class="planner-drag-ghost" style={{ left: drag.x, top: drag.y }}>
           {drag.payload.kind === "chore"
             ? drag.payload.chore.title
+            : drag.payload.kind === "meal"
+              ? drag.payload.meal.title
             : drag.payload.member.name}
         </div>
       )}
@@ -546,14 +631,34 @@ function MealPlannerModal({
   onSaved: () => void;
   onToast: (message: string) => void;
 }) {
-  const [mode, setMode] = useState<"recipe" | "label">("recipe");
+  const [mode, setMode] = useState<"favorites" | "search" | "label">("favorites");
   const [query, setQuery] = useState("");
   const [label, setLabel] = useState("");
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [loading, setLoading] = useState(false);
+  const queryRef = useRef<HTMLInputElement>(null);
+  const labelRef = useRef<HTMLInputElement>(null);
+  const quickMeals = [
+    "Fast Food",
+    "Dine Out",
+    "Date Night",
+    "Lunch Date",
+    "Order Delivery",
+    "Order Pizza",
+    "Meal Delivery Service",
+    "Every Man for Himself"
+  ];
 
   useEffect(() => {
-    if (mode !== "recipe") return;
+    if (mode === "favorites") {
+      setLoading(true);
+      api<Recipe[]>("/recipes/favorites")
+        .then(setRecipes)
+        .catch((error) => onToast(error.message))
+        .finally(() => setLoading(false));
+      return;
+    }
+    if (mode !== "search") return;
     const timer = window.setTimeout(async () => {
       setLoading(true);
       try {
@@ -583,69 +688,136 @@ function MealPlannerModal({
     onSaved();
   };
 
+  const saveLabel = async (title = label) => {
+    if (!title.trim()) return;
+    await api("/planner/meals", {
+      method: "POST",
+      ...jsonBody({ planned_date: date, title, recipe_id: null })
+    });
+    onSaved();
+  };
+
+  const recipeResults = (
+    <div class="planner-recipe-results">
+      {loading && <p class="empty">Loading recipes…</p>}
+      {!loading && recipes.length === 0 && (
+        <p class="empty">
+          {mode === "favorites"
+            ? "Favorite a recipe to keep it ready here."
+            : "No matching recipes found."}
+        </p>
+      )}
+      {recipes.map((recipe) => (
+        <button onClick={() => saveRecipe(recipe).catch((error) => onToast(error.message))}>
+          {recipe.image_data || recipe.image_url ? (
+            <img src={recipe.image_data || recipe.image_url} alt="" />
+          ) : (
+            <span>🍽</span>
+          )}
+          <strong>{recipe.title}</strong>
+          <small>{recipe.custom ? "Household recipe" : "TheMealDB"}</small>
+        </button>
+      ))}
+    </div>
+  );
+
   return (
     <Modal
       title={`Add meal · ${dateAtNoon(date).toLocaleDateString([], {
         weekday: "long"
       })}`}
       onClose={onClose}
-      wide
+      extraWide
     >
       <div class="planner-modal-tabs">
-        <button class={mode === "recipe" ? "active" : ""} onClick={() => setMode("recipe")}>
-          Find a recipe
+        <button class={mode === "favorites" ? "active" : ""} onClick={() => setMode("favorites")}>
+          ★ Favorites
+        </button>
+        <button class={mode === "search" ? "active" : ""} onClick={() => setMode("search")}>
+          Search recipes
         </button>
         <button class={mode === "label" ? "active" : ""} onClick={() => setMode("label")}>
           Simple meal label
         </button>
       </div>
-      {mode === "recipe" ? (
-        <>
-          <TouchInput
-            label="Search local and online recipes"
-            value={query}
-            onChange={setQuery}
-            placeholder="Chicken, tacos, soup…"
-          />
-          <div class="planner-recipe-results">
-            {loading && <p class="empty">Searching recipes…</p>}
-            {!loading && recipes.length === 0 && (
-              <p class="empty">Search for a recipe or choose the label option.</p>
-            )}
-            {recipes.map((recipe) => (
-              <button onClick={() => saveRecipe(recipe).catch((error) => onToast(error.message))}>
-                {recipe.image_data || recipe.image_url ? (
-                  <img src={recipe.image_data || recipe.image_url} alt="" />
-                ) : (
-                  <span>🍽</span>
-                )}
-                <strong>{recipe.title}</strong>
-                <small>{recipe.custom ? "Household recipe" : "TheMealDB"}</small>
-              </button>
-            ))}
-          </div>
-        </>
-      ) : (
-        <div class="planner-label-form">
-          <TouchInput
-            label="Meal"
-            value={label}
-            onChange={setLabel}
-            placeholder="Dine out, order pizza…"
-          />
-          <button
-            class="button primary full-width"
-            disabled={!label.trim()}
-            onClick={async () => {
-              await api("/planner/meals", {
-                method: "POST",
-                ...jsonBody({ planned_date: date, title: label, recipe_id: null })
-              });
-              onSaved();
-            }}
-          >
-            Add meal
-          </button>
+      {mode === "favorites" && (
+        <div class="planner-favorites-view">
+          <section class="planner-quick-meals">
+            <h3>Quick meal labels</h3>
+            <div>
+              {quickMeals.map((meal) => (
+                <button onClick={() => saveLabel(meal).catch((error) => onToast(error.message))}>
+                  {meal}
+                </button>
+              ))}
+            </div>
+          </section>
+          <section>
+            <h3>Favorite recipes</h3>
+            {recipeResults}
+          </section>
+        </div>
+      )}
+      {mode === "search" && (
+        <div class={`planner-entry-layout ${onScreenKeyboardEnabled.value ? "" : "without-keyboard"}`}>
+          <section class="planner-entry-content">
+            <label class="planner-entry-field">
+              <span>Search local and online recipes</span>
+              <input
+                ref={queryRef}
+                type="search"
+                autofocus
+                value={query}
+                placeholder="Chicken, tacos, soup…"
+                onInput={(event) => setQuery(event.currentTarget.value)}
+              />
+            </label>
+            {recipeResults}
+          </section>
+          {onScreenKeyboardEnabled.value && (
+            <TouchKeyboard
+              value={query}
+              onChange={setQuery}
+              targetRef={queryRef}
+              onConfirm={() => queryRef.current?.blur()}
+            />
+          )}
+        </div>
+      )}
+      {mode === "label" && (
+        <div class={`planner-entry-layout ${onScreenKeyboardEnabled.value ? "" : "without-keyboard"}`}>
+          <section class="planner-entry-content planner-label-form">
+            <label class="planner-entry-field">
+              <span>Meal label</span>
+              <input
+                ref={labelRef}
+                autofocus
+                value={label}
+                placeholder="Dine out, order pizza…"
+                onInput={(event) => setLabel(event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    saveLabel().catch((error) => onToast(error.message));
+                  }
+                }}
+              />
+            </label>
+            <button
+              class="button primary full-width planner-submit"
+              disabled={!label.trim()}
+              onClick={() => saveLabel().catch((error) => onToast(error.message))}
+            >
+              Add meal
+            </button>
+          </section>
+          {onScreenKeyboardEnabled.value && (
+            <TouchKeyboard
+              value={label}
+              onChange={setLabel}
+              targetRef={labelRef}
+              onConfirm={() => saveLabel().catch((error) => onToast(error.message))}
+            />
+          )}
         </div>
       )}
     </Modal>
@@ -669,10 +841,41 @@ function ChorePlannerModal({
   const [recurring, setRecurring] = useState(true);
   const [memberIds, setMemberIds] = useState<number[]>([]);
   const [color, setColor] = useState<string>(PLANNER_PASTELS[6]);
+  const titleRef = useRef<HTMLInputElement>(null);
+  const save = async () => {
+    if (!title.trim()) return;
+    try {
+      await api("/planner/chores", {
+        method: "POST",
+        ...jsonBody({
+          title,
+          color,
+          recurring,
+          planned_date: date,
+          member_ids: memberIds
+        })
+      });
+      onSaved();
+    } catch (error: any) {
+      onToast(error.message);
+    }
+  };
   return (
-    <Modal title="Add chore" onClose={onClose} wide>
-      <div class="planner-chore-form">
-        <TouchInput label="Chore" value={title} onChange={setTitle} />
+    <Modal title="Add chore" onClose={onClose} extraWide>
+      <div class={`planner-entry-layout ${onScreenKeyboardEnabled.value ? "" : "without-keyboard"}`}>
+        <section class="planner-entry-content planner-chore-form">
+        <label class="planner-entry-field">
+          <span>Chore</span>
+          <input
+            ref={titleRef}
+            autofocus
+            value={title}
+            onInput={(event) => setTitle(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") save();
+            }}
+          />
+        </label>
         <label class="setting-toggle">
           <span>Repeat every week</span>
           <input
@@ -719,28 +922,21 @@ function ChorePlannerModal({
           </div>
         </fieldset>
         <button
-          class="button primary full-width"
+          class="button primary full-width planner-submit"
           disabled={!title.trim()}
-          onClick={async () => {
-            try {
-              await api("/planner/chores", {
-                method: "POST",
-                ...jsonBody({
-                  title,
-                  color,
-                  recurring,
-                  planned_date: date,
-                  member_ids: memberIds
-                })
-              });
-              onSaved();
-            } catch (error: any) {
-              onToast(error.message);
-            }
-          }}
+          onClick={save}
         >
           Add chore
         </button>
+        </section>
+        {onScreenKeyboardEnabled.value && (
+          <TouchKeyboard
+            value={title}
+            onChange={setTitle}
+            targetRef={titleRef}
+            onConfirm={save}
+          />
+        )}
       </div>
     </Modal>
   );
@@ -758,26 +954,50 @@ function NotePlannerModal({
   onToast: (message: string) => void;
 }) {
   const [text, setText] = useState("");
+  const textRef = useRef<HTMLTextAreaElement>(null);
+  const save = async () => {
+    if (!text.trim()) return;
+    try {
+      await api("/planner/notes", {
+        method: "POST",
+        ...jsonBody({ planned_date: date, text })
+      });
+      onSaved();
+    } catch (error: any) {
+      onToast(error.message);
+    }
+  };
   return (
-    <Modal title="Add planner note" onClose={onClose} wide>
-      <TouchInput label="Note" value={text} onChange={setText} multiline />
-      <button
-        class="button primary full-width"
-        disabled={!text.trim()}
-        onClick={async () => {
-          try {
-            await api("/planner/notes", {
-              method: "POST",
-              ...jsonBody({ planned_date: date, text })
-            });
-            onSaved();
-          } catch (error: any) {
-            onToast(error.message);
-          }
-        }}
-      >
-        Add note
-      </button>
+    <Modal title="Add planner note" onClose={onClose} extraWide>
+      <div class={`planner-entry-layout ${onScreenKeyboardEnabled.value ? "" : "without-keyboard"}`}>
+        <section class="planner-entry-content planner-note-form">
+          <label class="planner-entry-field">
+            <span>Note</span>
+            <textarea
+              ref={textRef}
+              autofocus
+              value={text}
+              placeholder="Add anything useful for this day…"
+              onInput={(event) => setText(event.currentTarget.value)}
+            />
+          </label>
+          <button
+            class="button primary full-width planner-submit"
+            disabled={!text.trim()}
+            onClick={save}
+          >
+            Add note
+          </button>
+        </section>
+        {onScreenKeyboardEnabled.value && (
+          <TouchKeyboard
+            value={text}
+            onChange={setText}
+            targetRef={textRef}
+            onConfirm={save}
+          />
+        )}
+      </div>
     </Modal>
   );
 }

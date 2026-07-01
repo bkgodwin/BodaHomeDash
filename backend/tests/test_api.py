@@ -243,6 +243,7 @@ def test_week_planner_household_and_notepad(client):
     week = client.get("/api/v1/planner/week?start=2031-01-06")
     assert week.status_code == 200
     payload = week.json()
+    assert payload["start"] == "2031-01-05"
     assert payload["meals"][0]["title"] == "Order pizza"
     assert payload["chores"][0]["members"][0]["id"] == member_id
     assert payload["notes"][0]["text"] == "Planner test note"
@@ -257,6 +258,12 @@ def test_week_planner_household_and_notepad(client):
         json={"planned_date": "2031-01-09"},
     )
     assert moved.json()["planned_date"] == "2031-01-09"
+    moved_meal = client.put(
+        f"/api/v1/planner/meals/{meal.json()['id']}/move",
+        json={"planned_date": "2031-01-09", "position": 0},
+    )
+    assert moved_meal.status_code == 200
+    assert moved_meal.json()["planned_date"] == "2031-01-09"
 
     saved = client.put(
         "/api/v1/notepad",
