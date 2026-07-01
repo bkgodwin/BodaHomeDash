@@ -17,10 +17,13 @@ from typing import Callable
 
 
 class DisplayController:
-    def __init__(self, output: str = "HDMI-A-1"):
-        self.output = output
+    def __init__(self, output: str = "*"):
+        # "*" is safest for wlopm because your manual test worked with:
+        # XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-0 wlopm --off '*'
+        self.output = output or "*"
         self.last_backend = ""
         self.last_error = ""
+        self.last_environment = ""
 
     def off(self) -> bool:
         return self._run(False)
@@ -33,145 +36,341 @@ class DisplayController:
             "output": self.output,
             "backend": self.last_backend,
             "last_error": self.last_error,
+            "last_environment": self.last_environment,
         }
+
+    def _find_executable(self, name: str) -> str | None:
+        found = shutil.which(name)
+        if found:
+            return found
+
+        for candidate in (
+            f"/usr/bin/{name}",
+            f"/usr/local/bin/{name}",
+            f"/bin/{name}",
+        ):
+            if Path(candidate).exists():
+                return candidate
+
+        return None
+
+    def _read_proc_environment(self, pid_dir: Path) -> dict[str, str]:
+        try:
+            raw = (pid_dir / "environ").read_bytes()
+        except Exception:
+            return {}
+
+        environment: dict[str, str] = {}
+
+        for item in raw.split(b"\0"):
+            if b"=" not in item:
+                continue
+
+            key, value = item.split(b"=", 1)
+
+            try:
+                environment[key.decode()] = value.decode()
+            except Exception:
+                pass
+
+        return environment
+
+    def _runtime_owner_uid(self, runtime_dir: str) -> int | None:
+        try:
+            return Path(runtime_dir).stat().st_uid
+        except Exception:
+            return None
+
+    def _add_wayland_candidate(
+        self,
+        candidates: list[tuple[dict[str, str], int | None]],
+        runtime_dir: str | None,
+        wayland_display: str | None,
+        source: str,
+    ) -> None:
+        if not runtime_dir or not wayland_display:
+            return
+
+        runtime_path = Path(runtime_dir)
+
+        if not runtime_path.is_dir():
+            return
+
+        owner_uid = self._runtime_owner_uid(runtime_dir)
+
+        environment = os.environ.copy()
+        environment["XDG_RUNTIME_DIR"] = runtime_dir
+        environment["WAYLAND_DISPLAY"] = wayland_display
+        environment["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={runtime_dir}/bus"
+        environment["_DISPLAY_CONTROLLER_SOURCE"] = source
+
+        candidates.append((environment, owner_uid))
+
+    def _add_runtime_socket_candidates(
+        self,
+        candidates: list[tuple[dict[str, str], int | None]],
+        runtime_dir: str | None,
+        source: str,
+    ) -> None:
+        if not runtime_dir:
+            return
+
+        runtime_path = Path(runtime_dir)
+
+        if not runtime_path.is_dir():
+            return
+
+        displays: list[str] = []
+
+        try:
+            displays.extend(
+                socket.name
+                for socket in sorted(runtime_path.glob("wayland-*"))
+                if socket.is_socket()
+            )
+        except Exception:
+            pass
+
+        # Fallback guesses. These are harmless if wrong.
+        displays.extend(["wayland-0", "wayland-1"])
+
+        for display in dict.fromkeys(displays):
+            self._add_wayland_candidate(
+                candidates,
+                str(runtime_path),
+                display,
+                source,
+            )
 
     def _wayland_environments(self) -> list[tuple[dict[str, str], int | None]]:
         """
-        Return possible Wayland session environments.
+        Discover usable Wayland environments without requiring systemd
+        Environment= lines.
 
-        This intentionally searches /run/user/* because this backend may be
-        running as root or as a system service while the actual desktop session
-        belongs to the logged-in Pi user, usually UID 1000.
+        This checks:
+        1. The current process environment.
+        2. The current user's /run/user/<uid> directory.
+        3. Running labwc/chromium processes.
+        4. Every /run/user/* Wayland socket.
+
+        This is designed for Raspberry Pi OS labwc kiosk setups where the
+        backend may be launched by a service with no WAYLAND_DISPLAY variable.
         """
+        candidates: list[tuple[dict[str, str], int | None]] = []
         base = os.environ.copy()
-        candidates: list[tuple[Path, str, int | None]] = []
 
-        def add_runtime(runtime_text: str | None) -> None:
-            if not runtime_text:
-                return
-            runtime = Path(runtime_text)
-            if not runtime.is_dir():
-                return
+        # 1. Current process environment.
+        self._add_wayland_candidate(
+            candidates,
+            base.get("XDG_RUNTIME_DIR"),
+            base.get("WAYLAND_DISPLAY"),
+            "current-env",
+        )
+        self._add_runtime_socket_candidates(
+            candidates,
+            base.get("XDG_RUNTIME_DIR"),
+            "current-runtime",
+        )
 
-            owner_uid: int | None = None
+        # 2. Current UID runtime.
+        try:
+            self._add_runtime_socket_candidates(
+                candidates,
+                f"/run/user/{os.getuid()}",
+                "current-uid-runtime",
+            )
+        except Exception:
+            pass
+
+        # 3. Running labwc/chromium process environments.
+        proc = Path("/proc")
+
+        if proc.is_dir():
             try:
-                owner_uid = runtime.stat().st_uid
+                for pid_dir in proc.iterdir():
+                    if not pid_dir.name.isdigit():
+                        continue
+
+                    try:
+                        cmdline = (
+                            (pid_dir / "cmdline")
+                            .read_bytes()
+                            .replace(b"\0", b" ")
+                            .lower()
+                        )
+                    except Exception:
+                        continue
+
+                    if b"labwc" not in cmdline and b"chromium" not in cmdline:
+                        continue
+
+                    proc_env = self._read_proc_environment(pid_dir)
+
+                    self._add_wayland_candidate(
+                        candidates,
+                        proc_env.get("XDG_RUNTIME_DIR"),
+                        proc_env.get("WAYLAND_DISPLAY"),
+                        f"proc-{pid_dir.name}",
+                    )
+                    self._add_runtime_socket_candidates(
+                        candidates,
+                        proc_env.get("XDG_RUNTIME_DIR"),
+                        f"proc-runtime-{pid_dir.name}",
+                    )
             except Exception:
                 pass
 
-            displays: list[str] = []
-
-            current_display = base.get("WAYLAND_DISPLAY")
-            if current_display:
-                displays.append(current_display)
-
-            try:
-                displays.extend(
-                    path.name
-                    for path in runtime.glob("wayland-*")
-                    if path.is_socket()
-                )
-            except Exception:
-                pass
-
-            displays.extend(["wayland-0", "wayland-1"])
-
-            for display in dict.fromkeys(item for item in displays if item):
-                candidates.append((runtime, display, owner_uid))
-
-        # Try the environment already given to this process first.
-        add_runtime(base.get("XDG_RUNTIME_DIR"))
-
-        # Try the current process user's runtime.
-        if hasattr(os, "getuid"):
-            add_runtime(f"/run/user/{os.getuid()}")
-
-        # Try every logged-in graphical runtime. This is the important fix
-        # for services/root processes controlling the desktop user's display.
+        # 4. Every /run/user/* runtime.
         run_user = Path("/run/user")
+
         if run_user.is_dir():
             try:
-                for runtime in sorted(run_user.iterdir()):
-                    if runtime.is_dir():
-                        add_runtime(str(runtime))
+                for runtime_path in sorted(run_user.iterdir()):
+                    if runtime_path.is_dir():
+                        self._add_runtime_socket_candidates(
+                            candidates,
+                            str(runtime_path),
+                            "all-runtimes",
+                        )
             except Exception:
                 pass
 
-        environments: list[tuple[dict[str, str], int | None]] = []
-
+        # De-duplicate while preserving order.
+        unique: list[tuple[dict[str, str], int | None]] = []
         seen: set[tuple[str, str]] = set()
-        for runtime, display, owner_uid in candidates:
-            key = (str(runtime), display)
-            if key in seen:
-                continue
-            seen.add(key)
 
-            environment = base.copy()
-            environment["XDG_RUNTIME_DIR"] = str(runtime)
-            environment["WAYLAND_DISPLAY"] = display
-
-            # wlroots tools usually do not need DBus, but this helps with
-            # some desktop/session setups and does not hurt when unused.
-            environment.setdefault(
-                "DBUS_SESSION_BUS_ADDRESS",
-                f"unix:path={runtime}/bus",
+        for environment, owner_uid in candidates:
+            key = (
+                environment.get("XDG_RUNTIME_DIR", ""),
+                environment.get("WAYLAND_DISPLAY", ""),
             )
 
-            environments.append((environment, owner_uid))
+            if key in seen:
+                continue
 
-        return environments or [(base, None)]
+            seen.add(key)
+            unique.append((environment, owner_uid))
 
-    def _command_for_session_user(
+        return unique
+
+    def _command_as_session_user(
         self,
         command: list[str],
+        environment: dict[str, str],
         owner_uid: int | None,
     ) -> list[str]:
         """
-        If this backend is running as root, execute Wayland tools as the user
-        who owns the Wayland runtime directory. This avoids the common problem
-        where root can see /run/user/1000 but cannot properly control that
-        user's compositor session.
+        If the backend is running as root, execute the command as the user that
+        owns the Wayland runtime directory.
+
+        This is the key part that avoids needing users to hand-edit systemd
+        service Environment= lines.
         """
-        if platform.system() != "Linux":
-            return command
+        runtime_dir = environment.get("XDG_RUNTIME_DIR", "")
+        wayland_display = environment.get("WAYLAND_DISPLAY", "")
+        dbus_address = environment.get(
+            "DBUS_SESSION_BUS_ADDRESS",
+            f"unix:path={runtime_dir}/bus",
+        )
+
+        env_command = [
+            "env",
+            f"XDG_RUNTIME_DIR={runtime_dir}",
+            f"WAYLAND_DISPLAY={wayland_display}",
+            f"DBUS_SESSION_BUS_ADDRESS={dbus_address}",
+            *command,
+        ]
 
         try:
             current_uid = os.getuid()
         except Exception:
-            return command
+            return env_command
 
-        if current_uid != 0 or owner_uid in (None, 0, current_uid):
-            return command
+        # If not root, just run directly with the discovered environment.
+        if current_uid != 0:
+            return env_command
+
+        # If root owns the runtime, or we could not determine ownership,
+        # run directly.
+        if owner_uid is None or owner_uid in (0, current_uid):
+            return env_command
 
         try:
             import pwd
 
             username = pwd.getpwuid(owner_uid).pw_name
         except Exception:
-            return command
+            return env_command
 
         if shutil.which("runuser"):
-            return ["runuser", "-u", username, "--", *command]
+            return ["runuser", "-u", username, "--", *env_command]
 
         if shutil.which("sudo"):
-            return ["sudo", "-n", "-u", username, *command]
+            return ["sudo", "-n", "-u", username, *env_command]
 
-        return command
+        return env_command
 
     def _run_command(
         self,
+        backend: str,
         command: list[str],
         environment: dict[str, str],
         owner_uid: int | None,
-    ) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            self._command_for_session_user(command, owner_uid),
-            env=environment,
-            timeout=8,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
+    ) -> bool:
+        runtime_dir = environment.get("XDG_RUNTIME_DIR", "")
+        wayland_display = environment.get("WAYLAND_DISPLAY", "")
+        source = environment.get("_DISPLAY_CONTROLLER_SOURCE", "")
+
+        try:
+            final_command = self._command_as_session_user(
+                command,
+                environment,
+                owner_uid,
+            )
+
+            result = subprocess.run(
+                final_command,
+                env=environment,
+                timeout=8,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.last_environment = (
+                f"source={source}; "
+                f"XDG_RUNTIME_DIR={runtime_dir}; "
+                f"WAYLAND_DISPLAY={wayland_display}; "
+                f"owner_uid={owner_uid}"
+            )
+
+            if result.returncode == 0:
+                self.last_backend = backend
+                self.last_error = ""
+                return True
+
+            detail = (result.stderr or result.stdout).strip()
+            self.last_error = (
+                f"{backend} failed with exit {result.returncode}: "
+                f"{detail or 'no output'}; "
+                f"{self.last_environment}; "
+                f"command={' '.join(command)}"
+            )
+            return False
+
+        except Exception as error:
+            self.last_environment = (
+                f"source={source}; "
+                f"XDG_RUNTIME_DIR={runtime_dir}; "
+                f"WAYLAND_DISPLAY={wayland_display}; "
+                f"owner_uid={owner_uid}"
+            )
+            self.last_error = (
+                f"{backend} exception: {error}; "
+                f"{self.last_environment}; "
+                f"command={' '.join(command)}"
+            )
+            return False
 
     def _run(self, turn_on: bool) -> bool:
         if platform.system() != "Linux":
@@ -180,84 +379,97 @@ class DisplayController:
         action = "--on" if turn_on else "--off"
         errors: list[str] = []
 
-        for environment, owner_uid in self._wayland_environments():
-            commands: list[tuple[str, list[str]]] = []
+        wlopm = self._find_executable("wlopm")
+        wlr_randr = self._find_executable("wlr-randr")
 
-            if shutil.which("wlopm"):
-                # Try the configured output first.
-                commands.append(
-                    ("wlopm", ["wlopm", action, self.output])
-                )
+        environments = self._wayland_environments()
 
-                # Then try all outputs. This helps if the actual connector
-                # name is not HDMI-A-1.
-                commands.append(
-                    ("wlopm-all", ["wlopm", action, "*"])
-                )
+        if not environments:
+            self.last_error = (
+                "No Wayland environment found. "
+                "Expected a socket like /run/user/1000/wayland-0."
+            )
+            return False
 
-            if shutil.which("wlr-randr"):
+        for environment, owner_uid in environments:
+            # Primary path: wlopm. This matches your manually verified command.
+            if wlopm:
                 outputs = [self.output]
 
-                try:
-                    listed = self._run_command(
-                        ["wlr-randr"],
+                if self.output != "*":
+                    outputs.append("*")
+
+                for output in dict.fromkeys(outputs):
+                    if self._run_command(
+                        "wlopm",
+                        [wlopm, action, output],
                         environment,
                         owner_uid,
-                    )
-
-                    if listed.returncode == 0:
-                        outputs.extend(
-                            line.split()[0]
-                            for line in listed.stdout.splitlines()
-                            if line and not line[0].isspace()
-                        )
-                    else:
-                        detail = (listed.stderr or listed.stdout).strip()
-                        errors.append(
-                            f"wlr-randr-list "
-                            f"({environment.get('XDG_RUNTIME_DIR')}, "
-                            f"{environment.get('WAYLAND_DISPLAY')}): "
-                            f"{detail or f'exit {listed.returncode}'}"
-                        )
-                except Exception as error:
-                    errors.append(f"wlr-randr-list: {error}")
-
-                commands.extend(
-                    (
-                        "wlr-randr",
-                        ["wlr-randr", "--output", output, action],
-                    )
-                    for output in dict.fromkeys(outputs)
-                )
-
-            for backend, command in commands:
-                try:
-                    result = self._run_command(command, environment, owner_uid)
-
-                    if result.returncode == 0:
-                        if backend == "wlr-randr":
-                            self.output = command[-2]
-                        self.last_backend = backend
-                        self.last_error = ""
+                    ):
+                        self.output = output
                         return True
 
-                    detail = (result.stderr or result.stdout).strip()
-                    errors.append(
-                        f"{backend} "
-                        f"({environment.get('XDG_RUNTIME_DIR')}, "
-                        f"{environment.get('WAYLAND_DISPLAY')}, "
-                        f"uid={owner_uid}): "
-                        f"{detail or f'exit {result.returncode}'}"
-                    )
-                except Exception as error:
-                    errors.append(f"{backend}: {error}")
+                    errors.append(self.last_error)
+            else:
+                errors.append("wlopm was not found")
 
-        # Last fallback for Raspberry Pi firmware display power control.
-        # This may not work on every KMS/Wayland setup, but it is worth trying.
-        if shutil.which("vcgencmd"):
+            # Secondary path: wlr-randr.
+            if wlr_randr:
+                listed_outputs: list[str] = []
+
+                try:
+                    result = subprocess.run(
+                        self._command_as_session_user(
+                            [wlr_randr],
+                            environment,
+                            owner_uid,
+                        ),
+                        env=environment,
+                        timeout=8,
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                    )
+
+                    if result.returncode == 0:
+                        listed_outputs = [
+                            line.split()[0]
+                            for line in result.stdout.splitlines()
+                            if line and not line[0].isspace()
+                        ]
+                    else:
+                        detail = (result.stderr or result.stdout).strip()
+                        errors.append(
+                            f"wlr-randr list failed: "
+                            f"{detail or f'exit {result.returncode}'}"
+                        )
+                except Exception as error:
+                    errors.append(f"wlr-randr list exception: {error}")
+
+                if self.output != "*":
+                    listed_outputs.insert(0, self.output)
+
+                for output in dict.fromkeys(listed_outputs):
+                    if self._run_command(
+                        "wlr-randr",
+                        [wlr_randr, "--output", output, action],
+                        environment,
+                        owner_uid,
+                    ):
+                        self.output = output
+                        return True
+
+                    errors.append(self.last_error)
+            else:
+                errors.append("wlr-randr was not found")
+
+        # Last fallback for some Raspberry Pi display stacks.
+        vcgencmd = self._find_executable("vcgencmd")
+
+        if vcgencmd:
             try:
                 result = subprocess.run(
-                    ["vcgencmd", "display_power", "1" if turn_on else "0"],
+                    [vcgencmd, "display_power", "1" if turn_on else "0"],
                     timeout=8,
                     check=False,
                     capture_output=True,
@@ -270,17 +482,17 @@ class DisplayController:
                 ):
                     self.last_backend = "vcgencmd"
                     self.last_error = ""
+                    self.last_environment = "vcgencmd fallback"
                     return True
 
                 errors.append(
-                    f"vcgencmd: {(result.stderr or result.stdout).strip()}"
+                    f"vcgencmd failed: "
+                    f"{(result.stderr or result.stdout).strip() or result.returncode}"
                 )
             except Exception as error:
-                errors.append(f"vcgencmd: {error}")
+                errors.append(f"vcgencmd exception: {error}")
 
-        self.last_error = "; ".join(item for item in errors if item) or (
-            "No supported Wayland display-power utility was found"
-        )
+        self.last_error = "; ".join(item for item in errors if item)
         return False
 
 class AudioController:
