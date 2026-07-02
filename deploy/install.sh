@@ -78,9 +78,28 @@ sed \
   -e "s|@HOME@|$TARGET_HOME|g" \
   /opt/home-dashboard/deploy/home-dashboard.service.in \
   >/etc/systemd/system/home-dashboard.service
-systemctl daemon-reload
+
+# The display power backend needs to talk to the user's labwc Wayland session.
+# On Raspberry Pi OS labwc kiosk installs this is normally:
+#   XDG_RUNTIME_DIR=/run/user/<desktop uid>
+#   WAYLAND_DISPLAY=wayland-0
+#
+# This avoids making the user manually edit the service file.
+install -d -m 0755 /etc/systemd/system/home-dashboard.service.d
+cat >/etc/systemd/system/home-dashboard.service.d/10-display-session.conf <<EOF
+[Service]
+User=$TARGET_USER
+Environment=HOME=$TARGET_HOME
+Environment=XDG_RUNTIME_DIR=/run/user/$TARGET_UID
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=HOME_DASHBOARD_DISPLAY_OUTPUT=*
+Environment=HOME_DASHBOARD_DISPLAY_USER=$TARGET_USER
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EOF
+
 install -m 0644 /opt/home-dashboard/deploy/home-dashboard-update.service \
   /etc/systemd/system/home-dashboard-update.service
+
 systemctl daemon-reload
 systemctl enable home-dashboard.service
 
