@@ -129,8 +129,11 @@ systemctl restart home-dashboard.service
 
 echo "[8/8] Installation complete."
 echo
-echo "Reboot to open the first-run wizard:"
-echo "  sudo reboot"
-echo
-echo "The dashboard will also be available at:"
+echo "The dashboard will be available at:"
 echo "  http://$(hostname).local:8765"
+echo
+echo "Rebooting automatically in 10 seconds..."
+echo "Press Ctrl+C now to cancel the reboot."
+
+sleep 10
+systemctl reboot
