@@ -18,13 +18,14 @@ from typing import Callable
 
 class DisplayController:
     def __init__(self, output: str = "*"):
-        # Default to "*" because the confirmed-good command was:
-        # XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-0 wlopm --off '*'
         self.output = os.environ.get("HOME_DASHBOARD_DISPLAY_OUTPUT") or output or "*"
         self.last_backend = ""
         self.last_error = ""
         self.last_command = ""
         self.last_environment = ""
+        self.powered = True
+        self.last_change_at = 0.0
+        self._lock = threading.Lock()
 
     def off(self) -> bool:
         return self._run(False)
@@ -32,13 +33,15 @@ class DisplayController:
     def on(self) -> bool:
         return self._run(True)
 
-    def status(self) -> dict[str, str]:
+    def status(self) -> dict[str, object]:
         return {
             "output": self.output,
             "backend": self.last_backend,
             "last_error": self.last_error,
             "last_command": self.last_command,
             "last_environment": self.last_environment,
+            "powered": self.powered,
+            "last_change_at": self.last_change_at,
         }
 
     def _find_executable(self, name: str) -> str | None:
@@ -59,22 +62,14 @@ class DisplayController:
     def _display_environment(self) -> dict[str, str]:
         environment = os.environ.copy()
 
-        runtime_dir = (
-            environment.get("XDG_RUNTIME_DIR")
-            or os.environ.get("HOME_DASHBOARD_XDG_RUNTIME_DIR")
-        )
-
+        runtime_dir = environment.get("XDG_RUNTIME_DIR")
         if not runtime_dir:
             try:
                 runtime_dir = f"/run/user/{os.getuid()}"
             except Exception:
                 runtime_dir = "/run/user/1000"
 
-        wayland_display = (
-            environment.get("WAYLAND_DISPLAY")
-            or os.environ.get("HOME_DASHBOARD_WAYLAND_DISPLAY")
-            or "wayland-0"
-        )
+        wayland_display = environment.get("WAYLAND_DISPLAY") or "wayland-0"
 
         environment["XDG_RUNTIME_DIR"] = runtime_dir
         environment["WAYLAND_DISPLAY"] = wayland_display
@@ -85,48 +80,10 @@ class DisplayController:
 
         return environment
 
-    def _session_user_command(
-        self,
-        command: list[str],
-        environment: dict[str, str],
-    ) -> list[str]:
-        """
-        Normally the service should already run as the desktop user.
-
-        If someone accidentally runs the backend as root, this attempts to run
-        the display command as HOME_DASHBOARD_DISPLAY_USER instead.
-        """
-        display_user = os.environ.get("HOME_DASHBOARD_DISPLAY_USER", "").strip()
-
-        try:
-            current_uid = os.getuid()
-        except Exception:
-            return command
-
-        if current_uid != 0 or not display_user:
-            return command
-
-        env_command = [
-            "env",
-            f"XDG_RUNTIME_DIR={environment['XDG_RUNTIME_DIR']}",
-            f"WAYLAND_DISPLAY={environment['WAYLAND_DISPLAY']}",
-            f"DBUS_SESSION_BUS_ADDRESS={environment['DBUS_SESSION_BUS_ADDRESS']}",
-            *command,
-        ]
-
-        if shutil.which("runuser"):
-            return ["runuser", "-u", display_user, "--", *env_command]
-
-        if shutil.which("sudo"):
-            return ["sudo", "-n", "-u", display_user, *env_command]
-
-        return command
-
     def _run_command(self, backend: str, command: list[str]) -> bool:
         environment = self._display_environment()
-        final_command = self._session_user_command(command, environment)
 
-        self.last_command = " ".join(final_command)
+        self.last_command = " ".join(command)
         self.last_environment = (
             f"XDG_RUNTIME_DIR={environment.get('XDG_RUNTIME_DIR')}; "
             f"WAYLAND_DISPLAY={environment.get('WAYLAND_DISPLAY')}; "
@@ -135,7 +92,7 @@ class DisplayController:
 
         try:
             result = subprocess.run(
-                final_command,
+                command,
                 env=environment,
                 timeout=8,
                 check=False,
@@ -167,64 +124,83 @@ class DisplayController:
 
     def _run(self, turn_on: bool) -> bool:
         if platform.system() != "Linux":
+            self.powered = turn_on
+            self.last_change_at = time.time()
             return True
 
-        action = "--on" if turn_on else "--off"
-        errors: list[str] = []
-
-        wlopm = self._find_executable("wlopm")
-        if wlopm:
-            if self._run_command("wlopm", [wlopm, action, self.output]):
+        with self._lock:
+            # Avoid repeated identical calls too close together.
+            now = time.time()
+            if self.powered == turn_on and now - self.last_change_at < 1.0:
                 return True
-            errors.append(self.last_error)
 
-            if self.output != "*":
-                if self._run_command("wlopm-all", [wlopm, action, "*"]):
-                    self.output = "*"
+            action = "--on" if turn_on else "--off"
+            errors: list[str] = []
+
+            wlopm = self._find_executable("wlopm")
+            if wlopm:
+                if self._run_command("wlopm", [wlopm, action, self.output]):
+                    self.powered = turn_on
+                    self.last_change_at = time.time()
                     return True
+
                 errors.append(self.last_error)
-        else:
-            errors.append("wlopm was not found")
 
-        wlr_randr = self._find_executable("wlr-randr")
-        if wlr_randr and self.output != "*":
-            if self._run_command(
-                "wlr-randr",
-                [wlr_randr, "--output", self.output, action],
-            ):
-                return True
-            errors.append(self.last_error)
+                if self.output != "*":
+                    if self._run_command("wlopm-all", [wlopm, action, "*"]):
+                        self.output = "*"
+                        self.powered = turn_on
+                        self.last_change_at = time.time()
+                        return True
 
-        vcgencmd = self._find_executable("vcgencmd")
-        if vcgencmd:
-            try:
-                result = subprocess.run(
-                    [vcgencmd, "display_power", "1" if turn_on else "0"],
-                    timeout=8,
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                )
+                    errors.append(self.last_error)
+            else:
+                errors.append("wlopm was not found")
 
-                if (
-                    result.returncode == 0
-                    and f"={1 if turn_on else 0}" in result.stdout
+            wlr_randr = self._find_executable("wlr-randr")
+            if wlr_randr and self.output != "*":
+                if self._run_command(
+                    "wlr-randr",
+                    [wlr_randr, "--output", self.output, action],
                 ):
-                    self.last_backend = "vcgencmd"
-                    self.last_error = ""
-                    self.last_command = " ".join([vcgencmd, "display_power"])
-                    self.last_environment = "vcgencmd fallback"
+                    self.powered = turn_on
+                    self.last_change_at = time.time()
                     return True
 
-                errors.append(
-                    f"vcgencmd failed: "
-                    f"{(result.stderr or result.stdout).strip() or result.returncode}"
-                )
-            except Exception as error:
-                errors.append(f"vcgencmd exception: {error}")
+                errors.append(self.last_error)
 
-        self.last_error = "; ".join(item for item in errors if item)
-        return False
+            vcgencmd = self._find_executable("vcgencmd")
+            if vcgencmd:
+                try:
+                    result = subprocess.run(
+                        [vcgencmd, "display_power", "1" if turn_on else "0"],
+                        timeout=8,
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                    )
+
+                    if (
+                        result.returncode == 0
+                        and f"={1 if turn_on else 0}" in result.stdout
+                    ):
+                        self.last_backend = "vcgencmd"
+                        self.last_error = ""
+                        self.last_command = " ".join([vcgencmd, "display_power"])
+                        self.last_environment = "vcgencmd fallback"
+                        self.powered = turn_on
+                        self.last_change_at = time.time()
+                        return True
+
+                    errors.append(
+                        f"vcgencmd failed: "
+                        f"{(result.stderr or result.stdout).strip() or result.returncode}"
+                    )
+                except Exception as error:
+                    errors.append(f"vcgencmd exception: {error}")
+
+            self.last_error = "; ".join(item for item in errors if item)
+            return False
 
 class AudioController:
     def __init__(self, output: str = "default"):
@@ -568,17 +544,14 @@ class PIRMonitor:
         pin: int,
         active_high: bool,
         on_motion: Callable[[], None],
-        refresh_seconds: float = 2.0,
     ):
         self.pin = pin
         self.active_high = active_high
         self.on_motion = on_motion
-        self.refresh_seconds = max(0.25, float(refresh_seconds))
         self.sensor = None
         self.running = False
         self.active = False
         self.last_motion_at: float | None = None
-        self._last_callback_at: float | None = None
         self.error = ""
         self.pin_factory = ""
 
@@ -599,17 +572,19 @@ class PIRMonitor:
             self.sensor.when_activated = self._activated
             self.sensor.when_deactivated = self._deactivated
 
-            initially_active = bool(self.sensor.is_active)
-            self.active = False
-            self._last_callback_at = None
+            self.active = bool(self.sensor.is_active)
             self.pin_factory = self.sensor.pin_factory.__class__.__name__
             self.running = True
             self.error = ""
 
-            if initially_active:
-                self._activated(force=True)
+            # Important:
+            # Do NOT call on_motion() just because the PIR is already active at boot.
+            # Otherwise the app can start in a permanently awake state.
+            if self.active:
+                self.last_motion_at = time.time()
 
             return True
+
         except Exception as error:
             self.error = str(error)
             self.running = False
@@ -621,66 +596,52 @@ class PIRMonitor:
             self.sensor = None
         self.running = False
         self.active = False
-        self._last_callback_at = None
 
-    def _activated(self, force: bool = False) -> None:
-        """
-        Treat an active PIR signal as continued motion.
-
-        The old behavior only called on_motion() on the first inactive->active
-        edge. That can fail if the display goes to sleep while the PIR is
-        already active. This version refreshes motion at a limited interval
-        while the PIR remains active.
-        """
-        now = time.time()
-        was_active = self.active
-
+    def _activated(self) -> None:
         self.active = True
-        self.last_motion_at = now
-
-        should_callback = (
-            force
-            or not was_active
-            or self._last_callback_at is None
-            or now - self._last_callback_at >= self.refresh_seconds
-        )
-
-        if should_callback:
-            self._last_callback_at = now
-            self.on_motion()
+        self.last_motion_at = time.time()
+        self.on_motion()
 
     def _deactivated(self) -> None:
         self.active = False
 
-    def poll(self) -> bool:
+    def read_active(self) -> bool:
+        """
+        Read the sensor state without firing on_motion().
+
+        This is safe to call from status endpoints, polling loops, or UI refreshes.
+        """
         if not self.sensor:
             return False
 
         try:
             detected = bool(self.sensor.is_active)
-
-            if detected:
-                self._activated()
-            else:
-                self._deactivated()
-
+            self.active = detected
             return detected
         except Exception as error:
             self.error = str(error)
             return False
 
+    def poll(self) -> bool:
+        """
+        Backward-compatible poll method.
+
+        Important: this no longer calls on_motion(). It only reads state.
+        Motion callbacks should come from gpiozero's when_activated event.
+        """
+        return self.read_active()
+
     def status(self) -> dict[str, object]:
         return {
             "enabled": True,
             "running": self.running,
-            "active": self.poll() if self.running else False,
+            "active": self.read_active() if self.running else False,
             "pin": self.pin,
             "active_high": self.active_high,
             "pin_factory": self.pin_factory,
             "last_motion_at": self.last_motion_at,
             "error": self.error,
         }
-
 
 class BarcodeMonitor:
     def __init__(self, device: str, on_scan: Callable[[str], None]):
