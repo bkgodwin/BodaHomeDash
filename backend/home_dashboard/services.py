@@ -551,6 +551,12 @@ class DashboardServices:
             (barcode,),
         )
         if local:
+            quantity = self.database.one(
+                """SELECT COALESCE(SUM(quantity),0) AS quantity
+                   FROM inventory_lots WHERE product_id=?""",
+                (local["id"],),
+            )
+            local["pantry_quantity"] = int(quantity["quantity"] if quantity else 0)
             return {"found": True, "source": "local", "product": local}
         try:
             remote = await self.barcode_provider.lookup(barcode)
@@ -598,7 +604,11 @@ class DashboardServices:
         return {
             "found": True,
             "source": "openfoodfacts",
-            "product": {**product, "barcode": barcode},
+            "product": {
+                **product,
+                "barcode": barcode,
+                "pantry_quantity": 0,
+            },
         }
 
     def activity(self) -> None:
@@ -686,7 +696,14 @@ class DashboardServices:
         while True:
             await asyncio.sleep(0.25)
             if self.pir and self.pir.running:
-                self.pir.poll()
+                detected = self.pir.poll()
+                if (
+                    detected
+                    and time.monotonic() >= self._motion_suppressed_until
+                ):
+                    # Keep the display awake for the full time the PIR output
+                    # remains HIGH, not only for the initial rising edge.
+                    self.activity()
 
     async def _timer_loop(self) -> None:
         while True:

@@ -69,6 +69,8 @@ export function App() {
   const [scanDestination, setScanDestination] = useState<
     "pantry" | "shopping" | null
   >(null);
+  const [scanQuantityOpen, setScanQuantityOpen] = useState(false);
+  const [scanQuantity, setScanQuantity] = useState(1);
   const toastTimer = useRef<number | null>(null);
   const [scanPromptOpen, setScanPromptOpen] = useState(false);
   const [cameraScanOpen, setCameraScanOpen] = useState(false);
@@ -222,6 +224,8 @@ export function App() {
   const beginScan = async (barcode: string) => {
     scannerTestMode.value = false;
     scannerQuickMode.value = false;
+    setScanQuantityOpen(false);
+    setScanQuantity(1);
     setScanned({ barcode, loading: true });
     try {
       const result = await api<any>(
@@ -238,12 +242,53 @@ export function App() {
               name: result.product.name,
               brand: result.product.brand,
               category: result.product.category,
-              package_size: result.product.package_size
+              package_size: result.product.package_size,
+              serving_size: result.product.serving_size,
+              pantry_quantity: Number(result.product.pantry_quantity || 0)
             }
           : { barcode }
       });
     } catch (error: any) {
       setScanned({ barcode, loading: false, seed: { barcode } });
+      showToast(error.message);
+    }
+  };
+
+  const adjustScannedPantry = async (direction: "add" | "remove", quantity = 1) => {
+    const seed = scanned?.seed;
+    if (!seed?.product_id || !seed.name) return;
+    try {
+      if (direction === "add") {
+        await api("/pantry", {
+          method: "POST",
+          ...jsonBody({
+            product_id: seed.product_id,
+            barcode: seed.barcode,
+            name: seed.name,
+            brand: seed.brand || "",
+            category: seed.category || "",
+            package_size: seed.package_size || "",
+            serving_size: seed.serving_size || "",
+            quantity,
+            expires_on: null
+          })
+        });
+      } else {
+        await api(
+          `/pantry/${seed.product_id}/consume?quantity=${quantity}`,
+          { method: "POST" }
+        );
+      }
+      showToast(
+        direction === "add"
+          ? `${quantity} added to pantry`
+          : `${quantity} removed from pantry`
+      );
+      setScanned(null);
+      setScanQuantityOpen(false);
+      setScanQuantity(1);
+      setRefreshToken((value) => value + 1);
+    } catch (error: any) {
       showToast(error.message);
     }
   };
@@ -659,12 +704,84 @@ export function App() {
               <p>
                 {scanned.seed?.name || `Unknown product ${scanned.barcode}`}
               </p>
-              <button
-                class="button primary"
-                onClick={() => setScanDestination("pantry")}
-              >
-                Add to Pantry
-              </button>
+              {scanned.seed?.product_id ? (
+                <>
+                  <div class="scan-stock-summary">
+                    <span>Currently in pantry</span>
+                    <strong>{scanned.seed.pantry_quantity || 0}</strong>
+                  </div>
+                  <div class="scan-quick-actions">
+                    <button
+                      class="button primary"
+                      onClick={() => adjustScannedPantry("add")}
+                    >
+                      + Add 1
+                    </button>
+                    <button
+                      class="button secondary"
+                      disabled={!scanned.seed.pantry_quantity}
+                      onClick={() => adjustScannedPantry("remove")}
+                    >
+                      − Remove 1
+                    </button>
+                    <button
+                      class="button secondary scan-adjust-toggle"
+                      aria-expanded={scanQuantityOpen}
+                      onClick={() => setScanQuantityOpen(!scanQuantityOpen)}
+                    >
+                      Adjust amount {scanQuantityOpen ? "▴" : "▾"}
+                    </button>
+                  </div>
+                  {scanQuantityOpen && (
+                    <div class="scan-quantity-adjuster">
+                      <div class="quantity-control">
+                        <span>Quantity</span>
+                        <button
+                          onClick={() => setScanQuantity(Math.max(1, scanQuantity - 1))}
+                        >
+                          −
+                        </button>
+                        <strong>{scanQuantity}</strong>
+                        <button
+                          onClick={() => setScanQuantity(Math.min(999, scanQuantity + 1))}
+                        >
+                          +
+                        </button>
+                      </div>
+                      <div class="button-row">
+                        <button
+                          class="button primary"
+                          onClick={() => adjustScannedPantry("add", scanQuantity)}
+                        >
+                          Add {scanQuantity}
+                        </button>
+                        <button
+                          class="button secondary"
+                          disabled={
+                            scanQuantity > (scanned.seed.pantry_quantity || 0)
+                          }
+                          onClick={() => adjustScannedPantry("remove", scanQuantity)}
+                        >
+                          Remove {scanQuantity}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  <button
+                    class="button secondary"
+                    onClick={() => setScanDestination("pantry")}
+                  >
+                    Add with expiration or details
+                  </button>
+                </>
+              ) : (
+                <button
+                  class="button primary"
+                  onClick={() => setScanDestination("pantry")}
+                >
+                  Add to Pantry
+                </button>
+              )}
               <button
                 class="button secondary"
                 onClick={() => setScanDestination("shopping")}

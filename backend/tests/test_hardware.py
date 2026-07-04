@@ -78,10 +78,8 @@ def test_pir_monitor_reports_live_edges(monkeypatch):
 
         def __init__(self, pin, **kwargs):
             self.pin = pin
-            self.is_active = False
+            self.pin = SimpleNamespace(state=0)
             self.pin_factory = FakeFactory()
-            self.when_activated = None
-            self.when_deactivated = None
             FakeInput.instance = self
 
         def close(self):
@@ -97,39 +95,61 @@ def test_pir_monitor_reports_live_edges(monkeypatch):
     monitor = PIRMonitor(17, True, lambda: motions.append("motion"))
 
     assert monitor.start() is True
-    FakeInput.instance.is_active = True
+    FakeInput.instance.pin.state = 1
     assert monitor.poll() is True
     assert motions == ["motion"]
-    assert monitor.status()["pin_factory"] == "FakeFactory"
-    FakeInput.instance.is_active = False
+    status = monitor.status()
+    assert status["pin_factory"] == "FakeFactory polling"
+    assert status["raw_value"] == 1
+    FakeInput.instance.pin.state = 0
     assert monitor.poll() is False
 
 
-def test_display_controller_discovers_actual_wayland_output(monkeypatch):
+def test_pir_monitor_prefers_direct_lgpio_polling(monkeypatch):
+    fake = SimpleNamespace(
+        SET_PULL_NONE=0,
+        value=0,
+        gpiochip_open=lambda chip: 41,
+        gpio_claim_input=lambda handle, pin, flags: 0,
+        gpio_read=lambda handle, pin: fake.value,
+        gpio_free=lambda handle, pin: 0,
+        gpiochip_close=lambda handle: 0,
+    )
+    motions = []
+    monkeypatch.setattr(hardware.platform, "system", lambda: "Linux")
+    monkeypatch.setitem(sys.modules, "lgpio", fake)
+    monitor = PIRMonitor(17, True, lambda: motions.append("motion"))
+
+    assert monitor.start() is True
+    assert monitor.status()["pin_factory"] == "lgpio direct polling"
+    fake.value = 1
+    assert monitor.poll() is True
+    assert motions == ["motion"]
+    assert monitor.status()["raw_value"] == 1
+    assert monitor.status()["transition_count"] == 1
+    monitor.stop()
+
+
+def test_display_controller_uses_wlopm_for_configured_output(monkeypatch):
     calls = []
 
     def run(command, **kwargs):
         calls.append(command)
-        if command == ["wlr-randr"]:
-            return SimpleNamespace(returncode=0, stdout="HDMI-A-2 connected\n", stderr="")
-        return SimpleNamespace(
-            returncode=0 if "HDMI-A-2" in command else 1,
-            stdout="",
-            stderr="" if "HDMI-A-2" in command else "unknown output",
-        )
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(hardware.platform, "system", lambda: "Linux")
     monkeypatch.setattr(
         hardware.shutil,
         "which",
-        lambda name: "/usr/bin/wlr-randr" if name == "wlr-randr" else None,
+        lambda name: "/usr/bin/wlopm" if name == "wlopm" else None,
     )
     monkeypatch.setattr(hardware.subprocess, "run", run)
     display = DisplayController("HDMI-A-1")
 
     assert display.off() is True
-    assert display.output == "HDMI-A-2"
-    assert any("HDMI-A-2" in command for command in calls)
+    assert display.output == "HDMI-A-1"
+    assert display.last_backend == "wlopm"
+    assert calls[0] == ["/usr/bin/wlopm", "--off", "HDMI-A-1"]
 
 
 def test_pipewire_system_volume_control(monkeypatch):

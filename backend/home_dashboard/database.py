@@ -177,6 +177,13 @@ CREATE TABLE IF NOT EXISTS recipes (
 CREATE INDEX IF NOT EXISTS idx_recipes_title ON recipes(title);
 CREATE INDEX IF NOT EXISTS idx_recipes_favorite ON recipes(favorite, custom);
 
+CREATE TABLE IF NOT EXISTS recipe_progress (
+    recipe_id TEXT PRIMARY KEY REFERENCES recipes(recipe_id) ON DELETE CASCADE,
+    checked_ingredients_json TEXT NOT NULL DEFAULT '[]',
+    checked_steps_json TEXT NOT NULL DEFAULT '[]',
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS household_members (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,

@@ -16,6 +16,7 @@ export interface ProductSeed {
   category?: string;
   package_size?: string;
   serving_size?: string;
+  pantry_quantity?: number;
 }
 
 interface Props {

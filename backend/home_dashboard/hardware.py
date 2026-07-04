@@ -549,8 +549,15 @@ class PIRMonitor:
         self.active_high = active_high
         self.on_motion = on_motion
         self.sensor = None
+        self._lgpio = None
+        self._chip_handle: int | None = None
+        self._lock = threading.Lock()
         self.running = False
         self.active = False
+        self.raw_value: int | None = None
+        self.read_count = 0
+        self.transition_count = 0
+        self.last_read_at: float | None = None
         self.last_motion_at: float | None = None
         self.error = ""
         self.pin_factory = ""
@@ -560,88 +567,128 @@ class PIRMonitor:
             self.error = "PIR monitoring is only available on Linux"
             return False
 
+        direct_error = ""
+        try:
+            import lgpio
+
+            self._lgpio = lgpio
+            self._chip_handle = lgpio.gpiochip_open(0)
+            flags = getattr(lgpio, "SET_PULL_NONE", 0)
+            lgpio.gpio_claim_input(self._chip_handle, self.pin, flags)
+            raw = int(lgpio.gpio_read(self._chip_handle, self.pin))
+            self.raw_value = raw
+            self.active = bool(raw) if self.active_high else not bool(raw)
+            self.read_count = 1
+            self.last_read_at = time.time()
+            self.pin_factory = "lgpio direct polling"
+            self.running = True
+            self.error = ""
+            return True
+        except Exception as error:
+            direct_error = str(error)
+            self._close_lgpio()
+
         try:
             from gpiozero import DigitalInputDevice
 
+            # The HC-SR501 drives its output pin, so it does not need an
+            # internal pull resistor. Polling avoids gpiozero's edge
+            # notification pipe and its working-directory sensitivity.
             self.sensor = DigitalInputDevice(
                 self.pin,
-                pull_up=not self.active_high,
-                bounce_time=0.05,
+                pull_up=None,
+                active_state=self.active_high,
             )
-
-            self.sensor.when_activated = self._activated
-            self.sensor.when_deactivated = self._deactivated
-
-            self.active = bool(self.sensor.is_active)
-            self.pin_factory = self.sensor.pin_factory.__class__.__name__
+            raw = int(bool(self.sensor.pin.state))
+            self.raw_value = raw
+            self.active = bool(raw) if self.active_high else not bool(raw)
+            self.read_count = 1
+            self.last_read_at = time.time()
+            self.pin_factory = (
+                f"{self.sensor.pin_factory.__class__.__name__} polling"
+            )
             self.running = True
             self.error = ""
-
-            # Important:
-            # Do NOT call on_motion() just because the PIR is already active at boot.
-            # Otherwise the app can start in a permanently awake state.
-            if self.active:
-                self.last_motion_at = time.time()
-
             return True
-
         except Exception as error:
-            self.error = str(error)
+            self.error = (
+                f"Direct GPIO read failed: {direct_error}; "
+                f"gpiozero fallback failed: {error}"
+            )
             self.running = False
             return False
 
     def stop(self) -> None:
-        if self.sensor:
-            self.sensor.close()
-            self.sensor = None
+        with self._lock:
+            if self.sensor:
+                self.sensor.close()
+                self.sensor = None
+            self._close_lgpio()
         self.running = False
         self.active = False
 
-    def _activated(self) -> None:
-        self.active = True
-        self.last_motion_at = time.time()
-        self.on_motion()
+    def _close_lgpio(self) -> None:
+        if self._lgpio is not None and self._chip_handle is not None:
+            try:
+                self._lgpio.gpio_free(self._chip_handle, self.pin)
+            except Exception:
+                pass
+            try:
+                self._lgpio.gpiochip_close(self._chip_handle)
+            except Exception:
+                pass
+        self._chip_handle = None
+        self._lgpio = None
 
-    def _deactivated(self) -> None:
-        self.active = False
-
-    def read_active(self) -> bool:
-        """
-        Read the sensor state without firing on_motion().
-
-        This is safe to call from status endpoints, polling loops, or UI refreshes.
-        """
-        if not self.sensor:
+    def poll(self) -> bool:
+        if not self.running:
             return False
-
         try:
-            detected = bool(self.sensor.is_active)
-            self.active = detected
+            with self._lock:
+                if self._lgpio is not None and self._chip_handle is not None:
+                    raw = int(
+                        self._lgpio.gpio_read(self._chip_handle, self.pin)
+                    )
+                elif self.sensor is not None:
+                    raw = int(bool(self.sensor.pin.state))
+                else:
+                    raise RuntimeError("No GPIO reader is available")
+                detected = bool(raw) if self.active_high else not bool(raw)
+                changed = detected != self.active
+                self.raw_value = raw
+                self.read_count += 1
+                self.last_read_at = time.time()
+                self.active = detected
+                if changed:
+                    self.transition_count += 1
+                activated = changed and detected
+                if activated:
+                    self.last_motion_at = self.last_read_at
+                self.error = ""
+            if activated:
+                self.on_motion()
             return detected
         except Exception as error:
             self.error = str(error)
             return False
 
-    def poll(self) -> bool:
-        """
-        Backward-compatible poll method.
-
-        Important: this no longer calls on_motion(). It only reads state.
-        Motion callbacks should come from gpiozero's when_activated event.
-        """
-        return self.read_active()
-
     def status(self) -> dict[str, object]:
+        active = self.poll() if self.running else False
         return {
             "enabled": True,
             "running": self.running,
-            "active": self.read_active() if self.running else False,
+            "active": active,
+            "raw_value": self.raw_value,
+            "read_count": self.read_count,
+            "transition_count": self.transition_count,
+            "last_read_at": self.last_read_at,
             "pin": self.pin,
             "active_high": self.active_high,
             "pin_factory": self.pin_factory,
             "last_motion_at": self.last_motion_at,
             "error": self.error,
         }
+
 
 class BarcodeMonitor:
     def __init__(self, device: str, on_scan: Callable[[str], None]):

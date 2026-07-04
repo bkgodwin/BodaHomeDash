@@ -1,8 +1,10 @@
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { api, jsonBody } from "../api";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Modal } from "../components/Modal";
 import { TouchInput } from "../components/TouchInput";
+import { TouchKeyboard } from "../components/TouchKeyboard";
+import { onScreenKeyboardEnabled } from "../inputPreferences";
 import { Recipe, RecipeIngredient } from "../types";
 
 interface Props {
@@ -36,6 +38,9 @@ export function RecipesScreen({
   const [checkedSteps, setCheckedSteps] = useState<number[]>([]);
   const [loading, setLoading] = useState(false);
   const [offline, setOffline] = useState(false);
+  const [searchKeyboardOpen, setSearchKeyboardOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const progressSaveQueue = useRef<Promise<void>>(Promise.resolve());
 
   const load = async (search = query, mode = searchMode) => {
     setLoading(true);
@@ -65,14 +70,56 @@ export function RecipesScreen({
       onViewingChange(false);
       return;
     }
+    let current = true;
     setCheckedIngredients([]);
     setCheckedSteps([]);
     onViewingChange(true);
-    return () => onViewingChange(false);
+    api<{ checked_ingredients: number[]; checked_steps: number[] }>(
+      `/recipes/${encodeURIComponent(selected.recipe_id)}/progress`
+    )
+      .then((progress) => {
+        if (!current) return;
+        setCheckedIngredients(
+          progress.checked_ingredients.filter(
+            (index) => index < selected.ingredients.length
+          )
+        );
+        setCheckedSteps(
+          progress.checked_steps.filter((index) => index < selected.steps.length)
+        );
+      })
+      .catch((error) => {
+        if (current) onToast(`Recipe progress could not be loaded: ${error.message}`);
+      });
+    return () => {
+      current = false;
+      onViewingChange(false);
+    };
   }, [selected?.recipe_id]);
+
+  const saveProgress = (
+    recipe: Recipe,
+    ingredients: number[],
+    steps: number[]
+  ) => {
+    const request = progressSaveQueue.current.then(() =>
+      api<void>(`/recipes/${encodeURIComponent(recipe.recipe_id)}/progress`, {
+        method: "PUT",
+        ...jsonBody({
+          checked_ingredients: ingredients,
+          checked_steps: steps
+        })
+      })
+    );
+    progressSaveQueue.current = request.catch((error) => {
+      onToast(`Recipe progress could not be saved: ${error.message}`);
+    });
+    return request.then(() => true).catch(() => false);
+  };
 
   const openRecipe = async (recipe: Recipe) => {
     try {
+      setSearchKeyboardOpen(false);
       const detail = await api<Recipe>(
         `/recipes/${encodeURIComponent(recipe.recipe_id)}`
       );
@@ -133,6 +180,18 @@ export function RecipesScreen({
           </div>
           <div class="recipe-detail-actions">
             <button
+              class="button secondary"
+              onClick={async () => {
+                setCheckedIngredients([]);
+                setCheckedSteps([]);
+                if (await saveProgress(selected, [], [])) {
+                  onToast("Recipe checklist reset");
+                }
+              }}
+            >
+              Reset checks
+            </button>
+            <button
               class={`favorite-button ${selected.favorite ? "active" : ""}`}
               onClick={() => favorite(selected)}
               aria-label={selected.favorite ? "Remove favorite" : "Add favorite"}
@@ -164,13 +223,13 @@ export function RecipesScreen({
                   <input
                     type="checkbox"
                     checked={checkedIngredients.includes(index)}
-                    onChange={() =>
-                      setCheckedIngredients((values) =>
-                        values.includes(index)
-                          ? values.filter((value) => value !== index)
-                          : [...values, index]
-                      )
-                    }
+                    onChange={() => {
+                      const next = checkedIngredients.includes(index)
+                        ? checkedIngredients.filter((value) => value !== index)
+                        : [...checkedIngredients, index];
+                      setCheckedIngredients(next);
+                      saveProgress(selected, next, checkedSteps);
+                    }}
                   />
                   <span><strong>{ingredient.name}</strong><small>{ingredient.measure}</small></span>
                 </label>
@@ -204,13 +263,13 @@ export function RecipesScreen({
                 <input
                   type="checkbox"
                   checked={checkedSteps.includes(index)}
-                  onChange={() =>
-                    setCheckedSteps((values) =>
-                      values.includes(index)
-                        ? values.filter((value) => value !== index)
-                        : [...values, index]
-                    )
-                  }
+                  onChange={() => {
+                    const next = checkedSteps.includes(index)
+                      ? checkedSteps.filter((value) => value !== index)
+                      : [...checkedSteps, index];
+                    setCheckedSteps(next);
+                    saveProgress(selected, checkedIngredients, next);
+                  }}
                 />
                 <span><b>{index + 1}</b>{step}</span>
               </label>
@@ -279,6 +338,7 @@ export function RecipesScreen({
           </button>
         </div>
         <input
+          ref={searchInputRef}
           type="search"
           value={query}
           placeholder={
@@ -287,9 +347,24 @@ export function RecipesScreen({
               : "Chicken, garlic, rice"
           }
           onInput={(event) => setQuery(event.currentTarget.value)}
+          onFocus={() => {
+            if (localDevice && onScreenKeyboardEnabled.value) {
+              setSearchKeyboardOpen(true);
+            }
+          }}
         />
         {query && <button onClick={() => setQuery("")}>Clear</button>}
       </div>
+      {searchKeyboardOpen && localDevice && onScreenKeyboardEnabled.value && (
+        <div class="recipe-search-keyboard">
+          <TouchKeyboard
+            value={query}
+            onChange={setQuery}
+            targetRef={searchInputRef}
+            onConfirm={() => setSearchKeyboardOpen(false)}
+          />
+        </div>
+      )}
       {searchMode === "ingredient" && (
         <p class="recipe-search-hint">
           Separate multiple ingredients with commas. Results must contain every ingredient.

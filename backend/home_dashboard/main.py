@@ -62,6 +62,7 @@ from .models import (
     ReminderReorder,
     ReminderUpdate,
     RecipeInput,
+    RecipeProgressInput,
     SettingsUpdate,
     ShoppingCreate,
     ShoppingUpdate,
@@ -1132,23 +1133,42 @@ async def delete_lots(payload: LotDeleteMany):
 
 
 @app.post("/api/v1/pantry/{product_id}/consume")
-async def consume_pantry(product_id: int):
+async def consume_pantry(
+    product_id: int,
+    quantity: int = Query(default=1, ge=1, le=999),
+):
     with database.transaction() as connection:
-        lot = connection.execute(
+        lots = connection.execute(
             """SELECT * FROM inventory_lots WHERE product_id=?
-               ORDER BY added_at ASC, id ASC LIMIT 1""",
+               ORDER BY added_at ASC, id ASC""",
             (product_id,),
-        ).fetchone()
-        if not lot:
+        ).fetchall()
+        available = sum(int(lot["quantity"]) for lot in lots)
+        if not available:
             raise HTTPException(status_code=404, detail="Product is not in stock")
-        if lot["quantity"] <= 1:
-            connection.execute("DELETE FROM inventory_lots WHERE id=?", (lot["id"],))
-        else:
-            connection.execute(
-                """UPDATE inventory_lots SET quantity=quantity-1,updated_at=?
-                   WHERE id=?""",
-                (utcnow(), lot["id"]),
+        if available < quantity:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Only {available} item{'s' if available != 1 else ''} in stock",
             )
+        remaining_to_remove = quantity
+        now = utcnow()
+        for lot in lots:
+            if remaining_to_remove <= 0:
+                break
+            lot_quantity = int(lot["quantity"])
+            if lot_quantity <= remaining_to_remove:
+                connection.execute(
+                    "DELETE FROM inventory_lots WHERE id=?", (lot["id"],)
+                )
+                remaining_to_remove -= lot_quantity
+            else:
+                connection.execute(
+                    """UPDATE inventory_lots SET quantity=?,updated_at=?
+                       WHERE id=?""",
+                    (lot_quantity - remaining_to_remove, now, lot["id"]),
+                )
+                remaining_to_remove = 0
     await hub.broadcast("pantry.updated", {"product_id": product_id})
     remaining = database.one(
         "SELECT COALESCE(SUM(quantity),0) AS quantity FROM inventory_lots WHERE product_id=?",
@@ -1653,6 +1673,47 @@ def favorite_recipes():
                ORDER BY favorite DESC,custom DESC,title COLLATE NOCASE"""
         )
     ]
+
+
+@app.get("/api/v1/recipes/{recipe_id}/progress")
+def recipe_progress(recipe_id: str):
+    if not database.one(
+        "SELECT recipe_id FROM recipes WHERE recipe_id=?", (recipe_id,)
+    ):
+        raise HTTPException(status_code=404, detail="Recipe not found")
+    row = database.one(
+        "SELECT * FROM recipe_progress WHERE recipe_id=?", (recipe_id,)
+    )
+    if not row:
+        return {"checked_ingredients": [], "checked_steps": []}
+    return {
+        "checked_ingredients": json.loads(row["checked_ingredients_json"]),
+        "checked_steps": json.loads(row["checked_steps_json"]),
+    }
+
+
+@app.put("/api/v1/recipes/{recipe_id}/progress")
+def save_recipe_progress(recipe_id: str, payload: RecipeProgressInput):
+    if not database.one(
+        "SELECT recipe_id FROM recipes WHERE recipe_id=?", (recipe_id,)
+    ):
+        raise HTTPException(status_code=404, detail="Recipe not found")
+    database.execute(
+        """INSERT INTO recipe_progress(
+               recipe_id,checked_ingredients_json,checked_steps_json,updated_at
+           ) VALUES(?,?,?,?)
+           ON CONFLICT(recipe_id) DO UPDATE SET
+               checked_ingredients_json=excluded.checked_ingredients_json,
+               checked_steps_json=excluded.checked_steps_json,
+               updated_at=excluded.updated_at""",
+        (
+            recipe_id,
+            json.dumps(payload.checked_ingredients),
+            json.dumps(payload.checked_steps),
+            utcnow(),
+        ),
+    )
+    return payload.model_dump()
 
 
 @app.get("/api/v1/recipes/{recipe_id}")

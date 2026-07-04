@@ -45,6 +45,11 @@ export function SettingsScreen({
   const [interfaces, setInterfaces] = useState<any[]>([]);
   const [networkInfo, setNetworkInfo] = useState<any>(null);
   const [motionStatus, setMotionStatus] = useState<any>(null);
+  const [motionTest, setMotionTest] = useState<{
+    running: boolean;
+    samples: number[];
+    transitions: number;
+  } | null>(null);
   const [systemVolume, setSystemVolume] = useState(50);
   const [wifiPassword, setWifiPassword] = useState("");
   const [selectedSsid, setSelectedSsid] = useState("");
@@ -842,10 +847,68 @@ export function SettingsScreen({
                         motionStatus?.pin_factory
                           ? ` · ${motionStatus.pin_factory}`
                           : ""
-                      }`}
+                      } · raw GPIO ${
+                        motionStatus?.raw_value == null
+                          ? "unavailable"
+                          : `${motionStatus.raw_value} (${
+                              motionStatus.raw_value ? "HIGH" : "LOW"
+                            })`
+                      } · ${motionStatus?.read_count ?? 0} reads`}
                   </small>
                 </div>
               </div>
+              <div class="button-row">
+                <button
+                  class="button secondary"
+                  disabled={motionTest?.running}
+                  onClick={async () => {
+                    const samples: number[] = [];
+                    let transitions = 0;
+                    let previous: number | null = null;
+                    setMotionTest({ running: true, samples: [], transitions: 0 });
+                    try {
+                      for (let index = 0; index < 25; index += 1) {
+                        const value = await api<any>("/hardware/motion");
+                        if (value.raw_value != null) {
+                          const raw = Number(value.raw_value);
+                          samples.push(raw);
+                          if (previous != null && raw !== previous) transitions += 1;
+                          previous = raw;
+                        }
+                        await new Promise((resolve) => window.setTimeout(resolve, 200));
+                      }
+                      setMotionTest({ running: false, samples, transitions });
+                    } catch (error: any) {
+                      setMotionTest({ running: false, samples, transitions });
+                      onToast(error.message);
+                    }
+                  }}
+                >
+                  {motionTest?.running ? "Watching sensor…" : "Test PIR for 5 seconds"}
+                </button>
+              </div>
+              {motionTest && !motionTest.running && (
+                <p
+                  class={`hardware-test-result ${
+                    motionTest.transitions ? "success" : ""
+                  }`}
+                >
+                  {motionTest.samples.length
+                    ? `Read ${motionTest.samples.length} samples: ${
+                        motionTest.samples.includes(0) ? "LOW" : ""
+                      }${
+                        motionTest.samples.includes(0) &&
+                        motionTest.samples.includes(1)
+                          ? " and "
+                          : ""
+                      }${
+                        motionTest.samples.includes(1) ? "HIGH" : ""
+                      }. ${motionTest.transitions} signal transition${
+                        motionTest.transitions === 1 ? "" : "s"
+                      } observed.`
+                    : "No GPIO values were returned. Check the sensor power, ground, BCM pin, and service log."}
+                </p>
+              )}
               <SettingToggle
                 label="Sensor output is active-high (HC-SR501 default)"
                 checked={settings.motion_active_high !== false}

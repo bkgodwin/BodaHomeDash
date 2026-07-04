@@ -123,6 +123,18 @@ class RecipeInput(BaseModel):
         return value
 
 
+class RecipeProgressInput(BaseModel):
+    checked_ingredients: list[int] = Field(default_factory=list, max_length=100)
+    checked_steps: list[int] = Field(default_factory=list, max_length=100)
+
+    @field_validator("checked_ingredients", "checked_steps")
+    @classmethod
+    def valid_checklist_indices(cls, values: list[int]) -> list[int]:
+        if any(value < 0 or value > 999 for value in values):
+            raise ValueError("Checklist positions must be non-negative")
+        return sorted(set(values))
+
+
 class HouseholdMemberInput(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     color: str = Field(default="#A7D8F0", pattern=r"^#[0-9a-fA-F]{6}$")

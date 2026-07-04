@@ -82,6 +82,18 @@ def test_custom_recipe_crud_and_favorite(client, monkeypatch):
     )
     assert updated.json()["favorite"] is True
     assert updated.json()["ingredients"][0]["name"] == "Shrimp"
+    progress = client.put(
+        f"/api/v1/recipes/{recipe['recipe_id']}/progress",
+        json={"checked_ingredients": [1, 0, 1], "checked_steps": [0]},
+    )
+    assert progress.status_code == 200
+    assert progress.json()["checked_ingredients"] == [0, 1]
+    assert client.get(
+        f"/api/v1/recipes/{recipe['recipe_id']}/progress"
+    ).json() == {
+        "checked_ingredients": [0, 1],
+        "checked_steps": [0],
+    }
 
     async def no_online_results(_: list[str]):
         return []
@@ -324,6 +336,28 @@ def test_fifo_consume_batch_notes_and_selected_batch_delete(client):
     assert deleted.status_code == 204
     remaining = client.get(f"/api/v1/products/{product_id}").json()["lots"]
     assert [lot["id"] for lot in remaining] == [first_lot]
+
+
+def test_scanned_product_quantity_lookup_and_multi_consume(client):
+    barcode = "012345678905"
+    product = client.post(
+        "/api/v1/pantry",
+        json={
+            "name": "Scanned Quantity Test",
+            "barcode": barcode,
+            "quantity": 4,
+        },
+    ).json()
+    lookup = client.post(
+        "/api/v1/barcodes/lookup", params={"barcode": barcode}
+    )
+    assert lookup.status_code == 200
+    assert lookup.json()["product"]["pantry_quantity"] == 4
+    consumed = client.post(
+        f"/api/v1/pantry/{product['id']}/consume", params={"quantity": 3}
+    )
+    assert consumed.status_code == 200
+    assert consumed.json()["quantity"] == 1
 
 
 def test_display_awake_lock(client):
