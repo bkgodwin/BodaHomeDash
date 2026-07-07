@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 from typing import Any, Literal
 
@@ -219,6 +220,7 @@ class LoginRequest(BaseModel):
 
 
 class CalendarConnect(BaseModel):
+    provider: Literal["icloud", "google"] = "icloud"
     username: str = Field(min_length=3, max_length=320)
     app_password: str = Field(min_length=4, max_length=200)
     display_name: str = Field(default="iCloud", max_length=100)
@@ -244,6 +246,27 @@ class BackupRestore(BaseModel):
 class WifiConnect(BaseModel):
     ssid: str = Field(min_length=1, max_length=64)
     password: str = Field(default="", max_length=128)
+
+
+class DnsUpdate(BaseModel):
+    automatic: bool = True
+    servers: list[str] = Field(default_factory=list, max_length=4)
+
+    @field_validator("servers")
+    @classmethod
+    def clean_dns_servers(cls, values: list[str]) -> list[str]:
+        cleaned = []
+        for value in values:
+            item = value.strip()
+            if not item:
+                continue
+            if not re.match(r"^(?:\d{1,3}\.){3}\d{1,3}$", item):
+                raise ValueError("DNS servers must be IPv4 addresses")
+            parts = [int(part) for part in item.split(".")]
+            if any(part > 255 for part in parts):
+                raise ValueError("DNS servers must be valid IPv4 addresses")
+            cleaned.append(item)
+        return cleaned
 
 
 class HardwareTest(BaseModel):

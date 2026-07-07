@@ -29,6 +29,7 @@ export function SettingsScreen({
 }: Props) {
   const [settings, setSettings] = useState<Settings>({});
   const [tab, setTab] = useState(setupMode ? "welcome" : "general");
+  const [calendarProvider, setCalendarProvider] = useState<"icloud" | "google">("icloud");
   const [calendarEmail, setCalendarEmail] = useState("");
   const [calendarPassword, setCalendarPassword] = useState("");
   const [calendarName, setCalendarName] = useState("iCloud");
@@ -44,6 +45,9 @@ export function SettingsScreen({
   const [networks, setNetworks] = useState<any[]>([]);
   const [interfaces, setInterfaces] = useState<any[]>([]);
   const [networkInfo, setNetworkInfo] = useState<any>(null);
+  const [networkStatus, setNetworkStatus] = useState<any>(null);
+  const [dnsAutomatic, setDnsAutomatic] = useState(true);
+  const [dnsServers, setDnsServers] = useState("");
   const [motionStatus, setMotionStatus] = useState<any>(null);
   const [motionTest, setMotionTest] = useState<{
     running: boolean;
@@ -62,6 +66,7 @@ export function SettingsScreen({
   const [metrics, setMetrics] = useState<any>(null);
   const [updateStatus, setUpdateStatus] = useState<any>(null);
   const [exitDesktopConfirm, setExitDesktopConfirm] = useState(false);
+  const [rebootConfirm, setRebootConfirm] = useState(false);
   const [householdMembers, setHouseholdMembers] = useState<HouseholdMember[]>([]);
   const [memberName, setMemberName] = useState("");
   const [memberColor, setMemberColor] = useState<string>(PLANNER_PASTELS[6]);
@@ -79,6 +84,7 @@ export function SettingsScreen({
       deviceValues,
       syncValues,
       interfaceValues,
+      networkStatusValue,
       memberValues
     ] = await Promise.all([
       api<Settings>("/settings"),
@@ -86,6 +92,7 @@ export function SettingsScreen({
       api<any>("/hardware/devices"),
       api<any>("/sync/status"),
       api<any>("/network/interfaces"),
+      api<any>("/network/status"),
       api<HouseholdMember[]>("/household/members")
     ]);
     setSettings(values);
@@ -94,6 +101,15 @@ export function SettingsScreen({
     setSyncDiagnostics(syncValues);
     setInterfaces(interfaceValues.interfaces || []);
     setNetworkInfo(interfaceValues);
+    setNetworkStatus(networkStatusValue);
+    setDnsAutomatic(networkStatusValue?.dns?.automatic !== false);
+    setDnsServers(
+      (
+        networkStatusValue?.dns?.configured_servers ||
+        networkStatusValue?.dns?.servers ||
+        []
+      ).join(", ")
+    );
     setMotionStatus(deviceValues.motion_status || null);
     if (
       deviceValues.system_volume?.volume != null &&
@@ -229,6 +245,7 @@ export function SettingsScreen({
       const result = await api<any>("/calendar/connect", {
         method: "POST",
         ...jsonBody({
+          provider: calendarProvider,
           username: calendarEmail,
           app_password: calendarPassword,
           display_name: calendarName
@@ -236,7 +253,8 @@ export function SettingsScreen({
       });
       setCalendars(result.calendars);
       setCalendarPassword("");
-      onToast("iCloud connected");
+      setCalendarEmail("");
+      onToast(`${calendarProvider === "google" ? "Google" : "iCloud"} connected`);
     } catch (error: any) {
       onToast(error.message);
     } finally {
@@ -289,7 +307,7 @@ export function SettingsScreen({
           <>
             <SettingsCard title="Your household dashboard">
               <p>
-                This wizard configures local weather, iCloud calendars, hardware
+                This wizard configures local weather, calendars, hardware
                 and optional phone access. Every option can be changed later.
               </p>
               <TouchInput
@@ -687,27 +705,50 @@ export function SettingsScreen({
 
         {tab === "calendar" && (
           <>
-            <SettingsCard title="Connect iCloud">
+            <SettingsCard title="Connect calendar account">
               <p>
-                Use your Apple Account email and an app-specific password—not
-                your normal Apple password.
+                Add iCloud and Google accounts here. Events from all enabled
+                calendars are merged into the same dashboard calendar.
               </p>
+              <label class="setting-select">
+                <span>Calendar provider</span>
+                <select
+                  value={calendarProvider}
+                  onChange={(event) => {
+                    const value = event.currentTarget.value as "icloud" | "google";
+                    setCalendarProvider(value);
+                    setCalendarName(value === "google" ? "Google" : "iCloud");
+                  }}
+                >
+                  <option value="icloud">iCloud Calendar</option>
+                  <option value="google">Google Calendar</option>
+                </select>
+              </label>
               <TouchInput
                 label="Account name"
                 value={calendarName}
                 onChange={setCalendarName}
               />
               <TouchInput
-                label="Apple Account email"
+                label={calendarProvider === "google" ? "Google account email" : "Apple Account email"}
                 value={calendarEmail}
                 onChange={setCalendarEmail}
               />
               <TouchInput
-                label="App-specific password"
+                label={
+                  calendarProvider === "google"
+                    ? "Google app password"
+                    : "Apple app-specific password"
+                }
                 value={calendarPassword}
                 onChange={setCalendarPassword}
                 secret
               />
+              <p class="hint">
+                {calendarProvider === "google"
+                  ? "Google CalDAV access usually requires a Google app password when 2-Step Verification is enabled."
+                  : "Use an Apple app-specific password, not your normal Apple Account password."}
+              </p>
               <button
                 class="button primary"
                 disabled={!calendarEmail || !calendarPassword || busy}
@@ -819,6 +860,16 @@ export function SettingsScreen({
                 checked={settings.motion_enabled}
                 onChange={(value) =>
                   setSettings({ ...settings, motion_enabled: value })
+                }
+              />
+              <SettingToggle
+                label="Blank display on inactivity when PIR is disabled"
+                checked={settings.display_sleep_without_pir !== false}
+                onChange={(value) =>
+                  setSettings({
+                    ...settings,
+                    display_sleep_without_pir: value
+                  })
                 }
               />
               <div
@@ -991,7 +1042,8 @@ export function SettingsScreen({
                 or trigger the PIR sensor to wake the display. It will also turn
                 itself back on automatically after 15 seconds. PIR input is
                 intentionally ignored for the first 5 seconds so you can confirm
-                that the display actually turned off.
+                that the display actually turned off. When PIR is disabled,
+                inactivity sleep uses screen blanking so touch can wake it.
               </p>
               {devices.display_status?.last_error && (
                 <p class="hardware-test-result error">
@@ -1182,6 +1234,8 @@ export function SettingsScreen({
                     motion_active_high: settings.motion_active_high !== false,
                     motion_timeout_seconds: settings.motion_timeout_seconds,
                     display_sleep_mode: settings.display_sleep_mode,
+                    display_sleep_without_pir:
+                      settings.display_sleep_without_pir !== false,
                     scanner_device: settings.scanner_device,
                     audio_output: settings.audio_output || "default"
                   })
@@ -1305,6 +1359,61 @@ export function SettingsScreen({
 
         {tab === "network" && (
           <>
+          <SettingsCard title="Connection status">
+            <div class="network-status-grid">
+              <article class={networkStatus?.wifi?.connected ? "sync-ok" : "sync-error"}>
+                <strong>Wi-Fi</strong>
+                <span>
+                  {networkStatus?.wifi?.connected
+                    ? networkStatus?.wifi?.ssid || networkStatus?.wifi?.connection
+                    : "Not connected"}
+                </span>
+                <small>
+                  {networkStatus?.wifi?.device || "No Wi-Fi device"} ·{" "}
+                  {networkStatus?.wifi?.signal != null
+                    ? `${networkStatus.wifi.signal}% signal`
+                    : "signal unavailable"}
+                </small>
+              </article>
+              <article>
+                <strong>Gateway</strong>
+                <span>{networkStatus?.gateway || "Not reported"}</span>
+                <small>{networkStatus?.available ? "NetworkManager" : "Status limited on this platform"}</small>
+              </article>
+              <article>
+                <strong>DNS</strong>
+                <span>
+                  {networkStatus?.dns?.automatic === false
+                    ? "Manual"
+                    : "Automatic"}
+                </span>
+                <small>
+                  {(
+                    networkStatus?.dns?.configured_servers ||
+                    networkStatus?.dns?.servers ||
+                    []
+                  ).join(", ") || "No DNS servers reported"}
+                </small>
+              </article>
+            </div>
+            {networkStatus?.error && (
+              <p class="hardware-test-result error">{networkStatus.error}</p>
+            )}
+            <button
+              class="button secondary"
+              onClick={async () => {
+                const value = await api<any>("/network/status");
+                setNetworkStatus(value);
+                setDnsAutomatic(value?.dns?.automatic !== false);
+                setDnsServers(
+                  (value?.dns?.configured_servers || value?.dns?.servers || []).join(", ")
+                );
+                onToast("Network status refreshed");
+              }}
+            >
+              Refresh network status
+            </button>
+          </SettingsCard>
           <SettingsCard title="Mobile Dash address">
             <p>
               Choose the local or VPN address shown in the home-screen reminder.
@@ -1373,6 +1482,7 @@ export function SettingsScreen({
                       method: "POST",
                       ...jsonBody({ ssid: selectedSsid, password: wifiPassword })
                     });
+                    setNetworkStatus(await api("/network/status"));
                     onToast("Wi-Fi connection requested");
                   }}
                 >
@@ -1380,6 +1490,42 @@ export function SettingsScreen({
                 </button>
               </>
             )}
+          </SettingsCard>
+          <SettingsCard title="DNS">
+            <p>
+              Automatic DNS follows the router or VPN. Manual DNS applies to
+              the active NetworkManager connection.
+            </p>
+            <SettingToggle
+              label="Use automatic DNS"
+              checked={dnsAutomatic}
+              onChange={setDnsAutomatic}
+            />
+            {!dnsAutomatic && (
+              <TouchInput
+                label="DNS servers"
+                value={dnsServers}
+                onChange={setDnsServers}
+                placeholder="1.1.1.1, 8.8.8.8"
+              />
+            )}
+            <button
+              class="button primary"
+              onClick={async () => {
+                const servers = dnsServers
+                  .split(/[,\s]+/)
+                  .map((item) => item.trim())
+                  .filter(Boolean);
+                const status = await api<any>("/network/dns", {
+                  method: "PUT",
+                  ...jsonBody({ automatic: dnsAutomatic, servers })
+                });
+                setNetworkStatus(status);
+                onToast("DNS settings applied");
+              }}
+            >
+              Save DNS settings
+            </button>
           </SettingsCard>
           </>
         )}
@@ -1606,6 +1752,13 @@ export function SettingsScreen({
               >
                 Exit kiosk to desktop
               </button>
+              <button
+                class="button danger"
+                disabled={metrics?.platform !== "Linux"}
+                onClick={() => setRebootConfirm(true)}
+              >
+                Reboot Raspberry Pi
+              </button>
             </SettingsCard>
           </>
         )}
@@ -1713,6 +1866,24 @@ export function SettingsScreen({
                 method: "POST"
               });
               onToast(result.message);
+            } catch (error: any) {
+              onToast(error.message);
+            }
+          }}
+        />
+      )}
+      {rebootConfirm && (
+        <ConfirmDialog
+          title="Reboot Raspberry Pi?"
+          message="This will restart the whole Pi. The dashboard should relaunch automatically after boot."
+          confirmLabel="Reboot Pi"
+          cancelLabel="Cancel"
+          onCancel={() => setRebootConfirm(false)}
+          onConfirm={async () => {
+            setRebootConfirm(false);
+            try {
+              await api("/system/reboot", { method: "POST" });
+              onToast("Reboot requested. The dashboard will disconnect briefly.");
             } catch (error: any) {
               onToast(error.message);
             }

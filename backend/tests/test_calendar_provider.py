@@ -1,7 +1,13 @@
 from datetime import UTC, datetime
 
 from home_dashboard.providers import calendar as calendar_module
-from home_dashboard.providers.calendar import ICloudCalendarProvider
+from home_dashboard.providers.calendar import GoogleCalendarProvider, ICloudCalendarProvider
+
+
+def test_google_calendar_provider_uses_google_caldav_endpoint():
+    provider = GoogleCalendarProvider("person@gmail.com", "app-password")
+
+    assert provider.server == "https://apidata.googleusercontent.com/caldav/v2/"
 
 
 def test_event_fetch_uses_discovered_icloud_shard(monkeypatch):
@@ -72,4 +78,3 @@ END:VCALENDAR
 
     assert events[0]["starts_at"].startswith("2026-07-01")
     assert events[0]["ends_at"].startswith("2026-07-03")
-

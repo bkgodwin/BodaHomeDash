@@ -61,6 +61,7 @@ cat >"/etc/sudoers.d/home-dashboard" <<EOF
 $TARGET_USER ALL=(root) NOPASSWD: /usr/local/lib/home-dashboard-network-helper *
 $TARGET_USER ALL=(root) NOPASSWD: /usr/bin/systemctl restart home-dashboard.service
 $TARGET_USER ALL=(root) NOPASSWD: /usr/bin/systemctl start --no-block home-dashboard-update.service
+$TARGET_USER ALL=(root) NOPASSWD: /usr/bin/systemctl reboot
 EOF
 chmod 0440 /etc/sudoers.d/home-dashboard
 

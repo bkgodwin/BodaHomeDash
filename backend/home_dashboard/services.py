@@ -16,7 +16,11 @@ from .database import Database, utcnow
 from .events import EventHub
 from .hardware import AudioController, BarcodeMonitor, DisplayController, PIRMonitor
 from .providers.barcode import OpenFoodFactsProvider
-from .providers.calendar import ICloudCalendarProvider
+from .providers.calendar import (
+    CalDAVCalendarProvider,
+    GoogleCalendarProvider,
+    ICloudCalendarProvider,
+)
 from .providers.weather import NWSAlertProvider, WeatherProvider
 from .security import SecretStore
 from .utils import normalize_barcode, normalize_name
@@ -71,6 +75,14 @@ class DashboardServices:
             "alerts": asyncio.Lock(),
             "calendar": asyncio.Lock(),
         }
+
+    @staticmethod
+    def calendar_provider_for(
+        provider_name: str, username: str, password: str
+    ) -> CalDAVCalendarProvider:
+        if provider_name == "google":
+            return GoogleCalendarProvider(username, password)
+        return ICloudCalendarProvider(username, password)
 
     async def start(self) -> None:
         self.hub.loop = asyncio.get_running_loop()
@@ -427,7 +439,9 @@ class DashboardServices:
                 password = self.secrets.get(f"calendar_password_{account['id']}")
                 if not password:
                     continue
-                provider = ICloudCalendarProvider(account["username"], password)
+                provider = self.calendar_provider_for(
+                    account["provider"], account["username"], password
+                )
                 await self._rediscover_account(account, provider)
                 calendars = self.database.all(
                     """SELECT * FROM calendars
@@ -496,11 +510,13 @@ class DashboardServices:
         )
         for account in accounts:
             password = self.secrets.get(f"calendar_password_{account['id']}")
-            if not password or account["provider"] != "icloud":
+            if not password:
                 continue
             await self._rediscover_account(
                 account,
-                ICloudCalendarProvider(account["username"], password),
+                self.calendar_provider_for(
+                    account["provider"], account["username"], password
+                ),
             )
         return self.database.all(
             """SELECT c.*,a.display_name AS account_name,a.provider
@@ -511,7 +527,7 @@ class DashboardServices:
     async def _rediscover_account(
         self,
         account: dict[str, Any],
-        provider: ICloudCalendarProvider,
+        provider: CalDAVCalendarProvider,
     ) -> None:
         remote_calendars = await provider.discover()
         existing_count = self.database.one(
@@ -668,7 +684,11 @@ class DashboardServices:
     async def _display_loop(self) -> None:
         while True:
             await asyncio.sleep(5)
-            if not self.database.setting("motion_enabled", True):
+            motion_enabled = self.database.setting("motion_enabled", True)
+            if (
+                not motion_enabled
+                and not self.database.setting("display_sleep_without_pir", True)
+            ):
                 continue
             if self.display_awake_lock:
                 continue
@@ -678,7 +698,11 @@ class DashboardServices:
                 and datetime.now(UTC) - self.last_activity
                 > timedelta(seconds=timeout)
             ):
-                mode = self.database.setting("display_sleep_mode", "hdmi")
+                mode = (
+                    self.database.setting("display_sleep_mode", "hdmi")
+                    if motion_enabled
+                    else "blank"
+                )
                 success = True
                 if mode == "hdmi":
                     success = self.display.off()

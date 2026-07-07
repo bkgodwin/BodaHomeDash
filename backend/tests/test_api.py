@@ -216,6 +216,7 @@ def test_pi_diagnostic_shapes(client):
     network = client.get("/api/v1/network/interfaces").json()
     assert network["listening_host"] == "0.0.0.0"
     assert network["restart_required"] is False
+    assert {"wifi", "dns", "interfaces"} <= client.get("/api/v1/network/status").json().keys()
 
 
 def test_week_planner_household_and_notepad(client):
@@ -367,3 +368,29 @@ def test_display_awake_lock(client):
     assert client.get("/api/v1/status").json()["display_awake_lock"] is True
     disabled = client.put("/api/v1/display/awake-lock?enabled=false")
     assert disabled.json()["enabled"] is False
+
+
+def test_reboot_endpoint_uses_systemctl_on_linux(client, monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(dashboard_main.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(
+        dashboard_main.subprocess,
+        "Popen",
+        lambda command, **kwargs: calls.append(command),
+    )
+
+    response = client.post("/api/v1/system/reboot")
+
+    assert response.status_code == 200
+    assert response.json()["rebooting"] is True
+    assert calls == [["sudo", "-n", "/usr/bin/systemctl", "reboot"]]
+
+
+def test_dns_endpoint_rejects_invalid_ipv4(client):
+    response = client.put(
+        "/api/v1/network/dns",
+        json={"automatic": False, "servers": ["999.1.1.1"]},
+    )
+
+    assert response.status_code == 422

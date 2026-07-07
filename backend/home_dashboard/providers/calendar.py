@@ -19,10 +19,11 @@ class RemoteCalendar:
     read_only: bool = True
 
 
-class ICloudCalendarProvider:
+class CalDAVCalendarProvider:
     """Small CalDAV adapter. Network calls run in a worker thread."""
 
-    server = "https://caldav.icloud.com/"
+    server: str = ""
+    name = "CalDAV"
 
     def __init__(self, username: str, app_password: str):
         self.username = username
@@ -124,3 +125,13 @@ class ICloudCalendarProvider:
                 return value.replace(tzinfo=UTC)
             return value
         return datetime.combine(value, time.min, tzinfo=UTC)
+
+
+class ICloudCalendarProvider(CalDAVCalendarProvider):
+    name = "iCloud"
+    server = "https://caldav.icloud.com/"
+
+
+class GoogleCalendarProvider(CalDAVCalendarProvider):
+    name = "Google"
+    server = "https://apidata.googleusercontent.com/caldav/v2/"

@@ -322,6 +322,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "motion_active_high": True,
     "motion_timeout_seconds": 300,
     "display_sleep_mode": "hdmi",
+    "display_sleep_without_pir": True,
     "display_output": "HDMI-A-1",
     "weather_effects": "full",
     "background_preview": "auto",

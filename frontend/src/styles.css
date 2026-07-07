@@ -591,7 +591,15 @@ select:focus-visible {
   margin-top: 14px;
 }
 
-.sync-provider-grid article {
+.network-status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.sync-provider-grid article,
+.network-status-grid article {
   min-width: 0;
   padding: 12px;
   display: grid;
@@ -601,9 +609,15 @@ select:focus-visible {
   background: rgba(7, 27, 52, 0.2);
 }
 
-.sync-provider-grid article.sync-error {
+.sync-provider-grid article.sync-error,
+.network-status-grid article.sync-error {
   border-color: rgba(245, 119, 119, 0.6);
   background: rgba(135, 45, 48, 0.24);
+}
+
+.network-status-grid article.sync-ok {
+  border-color: rgba(100, 218, 153, 0.48);
+  background: rgba(45, 132, 82, 0.22);
 }
 
 .sync-provider-grid code,

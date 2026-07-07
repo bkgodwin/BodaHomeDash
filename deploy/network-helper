@@ -1,20 +1,58 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "${1:-}" != "connect" ]]; then
-  echo "Only the connect operation is supported." >&2
-  exit 2
-fi
+operation="${1:-}"
 
-ssid="${2:-}"
-password="${3:-}"
-if [[ -z "$ssid" || "$ssid" == -* || ${#ssid} -gt 64 ]]; then
-  echo "Invalid SSID." >&2
-  exit 2
-fi
+active_connection() {
+  nmcli -t -f NAME,DEVICE connection show --active \
+    | awk -F: '$2 ~ /^(wlan|wl|en|eth)/ {print $1; exit}'
+}
 
-if [[ -n "$password" ]]; then
-  exec nmcli device wifi connect "$ssid" password "$password"
-else
-  exec nmcli device wifi connect "$ssid"
-fi
+case "$operation" in
+  connect)
+    ssid="${2:-}"
+    password="${3:-}"
+    if [[ -z "$ssid" || "$ssid" == -* || ${#ssid} -gt 64 ]]; then
+      echo "Invalid SSID." >&2
+      exit 2
+    fi
+
+    if [[ -n "$password" ]]; then
+      exec nmcli device wifi connect "$ssid" password "$password"
+    else
+      exec nmcli device wifi connect "$ssid"
+    fi
+    ;;
+  dns)
+    mode="${2:-}"
+    shift 2 || true
+    connection="$(active_connection)"
+    if [[ -z "$connection" ]]; then
+      echo "No active NetworkManager connection was found." >&2
+      exit 3
+    fi
+    if [[ "$mode" == "auto" ]]; then
+      nmcli connection modify "$connection" ipv4.ignore-auto-dns no ipv4.dns ""
+    elif [[ "$mode" == "manual" ]]; then
+      if [[ "$#" -lt 1 || "$#" -gt 4 ]]; then
+        echo "Enter one to four DNS servers." >&2
+        exit 2
+      fi
+      for server in "$@"; do
+        if [[ ! "$server" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+          echo "DNS servers must be IPv4 addresses." >&2
+          exit 2
+        fi
+      done
+      nmcli connection modify "$connection" ipv4.ignore-auto-dns yes ipv4.dns "$*"
+    else
+      echo "Use dns auto or dns manual." >&2
+      exit 2
+    fi
+    nmcli connection up "$connection"
+    ;;
+  *)
+    echo "Supported operations: connect, dns." >&2
+    exit 2
+    ;;
+esac

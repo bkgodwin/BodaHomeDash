@@ -44,6 +44,7 @@ from .models import (
     BackupRestore,
     CalendarConnect,
     CalendarSelection,
+    DnsUpdate,
     HardwareTest,
     HouseholdMemberInput,
     LoginRequest,
@@ -70,7 +71,7 @@ from .models import (
     TimerCreate,
     WifiConnect,
 )
-from .providers.calendar import ICloudCalendarProvider
+from .providers.calendar import GoogleCalendarProvider, ICloudCalendarProvider
 from .providers.recipes import normalize_meal
 from .security import AuthManager, SecretStore
 from .services import DashboardServices
@@ -106,6 +107,120 @@ def mobile_dash_address() -> str:
     if any(item["address"] == selected for item in available):
         return f"{selected}:{config.port}"
     return f"{available[0]['address']}:{config.port}" if available else f"localhost:{config.port}"
+
+
+def _nmcli(args: list[str], timeout: int = 12) -> str:
+    result = subprocess.run(
+        ["nmcli", *args],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=True,
+    )
+    return result.stdout.strip()
+
+
+def _split_nmcli_line(line: str) -> list[str]:
+    values: list[str] = []
+    current = []
+    escaped = False
+    for character in line:
+        if escaped:
+            current.append(character)
+            escaped = False
+        elif character == "\\":
+            escaped = True
+        elif character == ":":
+            values.append("".join(current))
+            current = []
+        else:
+            current.append(character)
+    values.append("".join(current))
+    return values
+
+
+def network_status_payload() -> dict[str, Any]:
+    interfaces = ipv4_interfaces()
+    payload: dict[str, Any] = {
+        "platform": platform.system(),
+        "available": platform.system() == "Linux" and shutil.which("nmcli") is not None,
+        "interfaces": interfaces,
+        "wifi": {
+            "connected": False,
+            "device": "",
+            "ssid": "",
+            "signal": None,
+            "security": "",
+            "connection": "",
+        },
+        "dns": {"automatic": True, "servers": [], "connection": ""},
+        "gateway": "",
+    }
+    if platform.system() != "Linux" or shutil.which("nmcli") is None:
+        return payload
+    try:
+        for line in _nmcli(["-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "dev", "status"]).splitlines():
+            device, device_type, state, connection, *_ = [*_split_nmcli_line(line), "", "", "", ""]
+            if device_type == "wifi" and state == "connected":
+                payload["wifi"].update(
+                    {
+                        "connected": True,
+                        "device": device,
+                        "connection": connection,
+                    }
+                )
+                break
+        if payload["wifi"]["device"]:
+            details = _nmcli(
+                [
+                    "-t",
+                    "-f",
+                    "IP4.ADDRESS,IP4.GATEWAY,IP4.DNS",
+                    "device",
+                    "show",
+                    payload["wifi"]["device"],
+                ]
+            )
+            dns_servers = []
+            for line in details.splitlines():
+                key, value, *_ = [*_split_nmcli_line(line), ""]
+                if key.startswith("IP4.GATEWAY"):
+                    payload["gateway"] = value
+                elif key.startswith("IP4.DNS") and value:
+                    dns_servers.append(value)
+            payload["dns"]["servers"] = dns_servers
+        active_wifi = _nmcli(
+            ["-t", "-f", "ACTIVE,SSID,SIGNAL,SECURITY", "dev", "wifi"],
+            timeout=15,
+        )
+        for line in active_wifi.splitlines():
+            active, ssid, signal, security, *_ = [*_split_nmcli_line(line), "", "", "", ""]
+            if active == "yes":
+                payload["wifi"].update(
+                    {
+                        "ssid": ssid,
+                        "signal": int(signal) if signal.isdigit() else None,
+                        "security": security,
+                    }
+                )
+                break
+        connection = payload["wifi"]["connection"]
+        if connection:
+            payload["dns"]["connection"] = connection
+            dns_settings = _nmcli(
+                ["-t", "-f", "ipv4.ignore-auto-dns,ipv4.dns", "connection", "show", connection]
+            ).splitlines()
+            for line in dns_settings:
+                key, value, *_ = [*_split_nmcli_line(line), ""]
+                if key == "ipv4.ignore-auto-dns":
+                    payload["dns"]["automatic"] = value.lower() not in {"yes", "true"}
+                elif key == "ipv4.dns" and value:
+                    payload["dns"]["configured_servers"] = [
+                        item.strip() for item in value.split(",") if item.strip()
+                    ]
+    except Exception as error:
+        payload["error"] = str(error)
+    return payload
 
 
 def schedule_background(coroutine, label: str) -> None:
@@ -241,6 +356,7 @@ def status(request: Request) -> dict[str, Any]:
 def network_interfaces():
     selected = database.setting("mobile_dash_ipv4", "")
     available = ipv4_interfaces()
+    status_payload = network_status_payload()
     return {
         "interfaces": available,
         "selected": selected,
@@ -249,7 +365,13 @@ def network_interfaces():
         "selected_available": not selected
         or any(item["address"] == selected for item in available),
         "restart_required": False,
+        "status": status_payload,
     }
+
+
+@app.get("/api/v1/network/status")
+def network_status():
+    return network_status_payload()
 
 
 @app.get("/api/v1/auth/state")
@@ -796,20 +918,26 @@ async def update_shared_notepad(payload: SharedNotepadInput):
 
 @app.post("/api/v1/calendar/connect")
 async def connect_calendar(payload: CalendarConnect):
-    provider = ICloudCalendarProvider(payload.username, payload.app_password)
+    provider = (
+        GoogleCalendarProvider(payload.username, payload.app_password)
+        if payload.provider == "google"
+        else ICloudCalendarProvider(payload.username, payload.app_password)
+    )
+    provider_label = "Google" if payload.provider == "google" else "iCloud"
     try:
         remote_calendars = await provider.discover()
     except Exception as error:
         raise HTTPException(
             status_code=400,
-            detail=f"Could not connect to iCloud: {error}",
+            detail=f"Could not connect to {provider_label}: {error}",
         ) from error
     now = utcnow()
+    display_name = payload.display_name or provider_label
     cursor = database.execute(
         """INSERT INTO calendar_accounts(
             provider,display_name,username,created_at,updated_at
-        ) VALUES('icloud',?,?,?,?)""",
-        (payload.display_name, payload.username, now, now),
+        ) VALUES(?,?,?,?,?)""",
+        (payload.provider, display_name, payload.username, now, now),
     )
     account_id = cursor.lastrowid
     secret_store.set(f"calendar_password_{account_id}", payload.app_password)
@@ -830,9 +958,7 @@ async def connect_calendar(payload: CalendarConnect):
             for index, item in enumerate(remote_calendars)
         ],
     )
-    calendars = database.all(
-        "SELECT * FROM calendars WHERE account_id=? ORDER BY name", (account_id,)
-    )
+    calendars = list_calendars()
     schedule_background(services.sync_calendars(), "calendar-connect-sync")
     return {"account_id": account_id, "calendars": calendars}
 
@@ -2105,6 +2231,26 @@ def connect_wifi(payload: WifiConnect):
         raise HTTPException(status_code=400, detail=error.stderr.strip()) from error
 
 
+@app.put("/api/v1/network/dns")
+def update_dns(payload: DnsUpdate):
+    if platform.system() != "Linux":
+        raise HTTPException(status_code=400, detail="DNS control is available on Pi only")
+    if not payload.automatic and not payload.servers:
+        raise HTTPException(status_code=400, detail="Enter at least one DNS server")
+    command = [
+        "sudo",
+        "/usr/local/lib/home-dashboard-network-helper",
+        "dns",
+        "auto" if payload.automatic else "manual",
+        *payload.servers,
+    ]
+    try:
+        subprocess.run(command, capture_output=True, text=True, timeout=30, check=True)
+        return network_status_payload()
+    except subprocess.CalledProcessError as error:
+        raise HTTPException(status_code=400, detail=error.stderr.strip()) from error
+
+
 @app.post("/api/v1/backups/configure")
 def configure_backup(payload: BackupConfigure):
     if payload.enabled:
@@ -2188,6 +2334,24 @@ def restart_service():
             stderr=subprocess.DEVNULL,
         )
     return {"restarting": True}
+
+
+@app.post("/api/v1/system/reboot")
+def reboot_pi():
+    if platform.system() != "Linux":
+        raise HTTPException(
+            status_code=400,
+            detail="Reboot is available on Raspberry Pi installations.",
+        )
+    try:
+        subprocess.Popen(
+            ["sudo", "-n", "/usr/bin/systemctl", "reboot"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+    return {"rebooting": True, "message": "Raspberry Pi reboot requested."}
 
 
 @app.post("/api/v1/system/exit-kiosk")
