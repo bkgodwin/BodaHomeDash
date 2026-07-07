@@ -58,6 +58,15 @@ KIOSK_USER="$(systemctl show home-dashboard.service --property=User --value)"
 if [[ -n "$KIOSK_USER" && "$KIOSK_USER" != "root" ]]; then
   KIOSK_UID="$(id -u "$KIOSK_USER")"
   KIOSK_HOME="$(getent passwd "$KIOSK_USER" | cut -d: -f6)"
+  install -m 0755 "$APP_DIR/deploy/network-helper" \
+    /usr/local/lib/home-dashboard-network-helper
+  cat >"/etc/sudoers.d/home-dashboard" <<EOF
+$KIOSK_USER ALL=(root) NOPASSWD: /usr/local/lib/home-dashboard-network-helper *
+$KIOSK_USER ALL=(root) NOPASSWD: /usr/bin/systemctl restart home-dashboard.service
+$KIOSK_USER ALL=(root) NOPASSWD: /usr/bin/systemctl start --no-block home-dashboard-update.service
+$KIOSK_USER ALL=(root) NOPASSWD: /usr/bin/systemctl reboot
+EOF
+  chmod 0440 /etc/sudoers.d/home-dashboard
   if [[ -n "$KIOSK_HOME" && -d "$KIOSK_HOME/.local/bin" ]]; then
     KIOSK_LAUNCHER="$KIOSK_HOME/.local/bin/home-dashboard-kiosk"
     install -o "$KIOSK_USER" -g "$KIOSK_USER" -m 0755 \
