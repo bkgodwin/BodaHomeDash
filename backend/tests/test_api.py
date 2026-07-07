@@ -219,6 +219,30 @@ def test_pi_diagnostic_shapes(client):
     assert {"wifi", "dns", "interfaces"} <= client.get("/api/v1/network/status").json().keys()
 
 
+def test_backup_media_discovery(client, tmp_path, monkeypatch):
+    media_root = tmp_path / "USB"
+    media_root.mkdir()
+    backup_file = media_root / "home-dashboard-test.hdbak"
+    backup_file.write_bytes(b"backup")
+    monkeypatch.setattr(
+        dashboard_main,
+        "_candidate_media_paths",
+        lambda extra_paths=None: [media_root],
+    )
+
+    media = client.get("/api/v1/backups/media")
+    assert media.status_code == 200
+    media_payload = media.json()
+    assert media_payload[0]["name"] == "USB"
+    assert media_payload[0]["writable"] is True
+    assert media_payload[0]["backup_path"].endswith("BodaDashBackups")
+    assert media_payload[0]["latest_backup"]["path"] == str(backup_file)
+
+    discovered = client.get("/api/v1/backups/discover")
+    assert discovered.status_code == 200
+    assert discovered.json()[0]["path"] == str(backup_file)
+
+
 def test_week_planner_household_and_notepad(client):
     member = client.post(
         "/api/v1/household/members",

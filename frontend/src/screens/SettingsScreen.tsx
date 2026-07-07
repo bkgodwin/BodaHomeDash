@@ -41,6 +41,7 @@ export function SettingsScreen({
   const [restorePath, setRestorePath] = useState("");
   const [restorePassword, setRestorePassword] = useState("");
   const [foundBackups, setFoundBackups] = useState<any[]>([]);
+  const [backupMedia, setBackupMedia] = useState<any[]>([]);
   const [devices, setDevices] = useState<any>({ input_devices: [] });
   const [networks, setNetworks] = useState<any[]>([]);
   const [interfaces, setInterfaces] = useState<any[]>([]);
@@ -84,16 +85,16 @@ export function SettingsScreen({
       deviceValues,
       syncValues,
       interfaceValues,
-      networkStatusValue,
-      memberValues
+      memberValues,
+      backupMediaValues
     ] = await Promise.all([
       api<Settings>("/settings"),
       api<any[]>("/calendar/calendars"),
       api<any>("/hardware/devices"),
       api<any>("/sync/status"),
       api<any>("/network/interfaces"),
-      api<any>("/network/status"),
-      api<HouseholdMember[]>("/household/members")
+      api<HouseholdMember[]>("/household/members"),
+      api<any[]>("/backups/media").catch(() => [])
     ]);
     setSettings(values);
     setCalendars(calendarValues);
@@ -101,12 +102,14 @@ export function SettingsScreen({
     setSyncDiagnostics(syncValues);
     setInterfaces(interfaceValues.interfaces || []);
     setNetworkInfo(interfaceValues);
-    setNetworkStatus(networkStatusValue);
-    setDnsAutomatic(networkStatusValue?.dns?.automatic !== false);
+    setBackupMedia(backupMediaValues);
+    const statusValue = interfaceValues.status || null;
+    setNetworkStatus(statusValue);
+    setDnsAutomatic(statusValue?.dns?.automatic !== false);
     setDnsServers(
       (
-        networkStatusValue?.dns?.configured_servers ||
-        networkStatusValue?.dns?.servers ||
+        statusValue?.dns?.configured_servers ||
+        statusValue?.dns?.servers ||
         []
       ).join(", ")
     );
@@ -120,6 +123,24 @@ export function SettingsScreen({
     setHouseholdMembers(memberValues);
     api<any>("/system/metrics").then(setMetrics).catch(() => undefined);
     api<any>("/system/update/status").then(setUpdateStatus).catch(() => undefined);
+  };
+
+  const refreshBackupMedia = async () => {
+    const media = await api<any[]>("/backups/media");
+    setBackupMedia(media);
+    return media;
+  };
+
+  const formatBytes = (value?: number | null) => {
+    if (value == null) return "space unknown";
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let size = Number(value);
+    let unit = 0;
+    while (size >= 1024 && unit < units.length - 1) {
+      size /= 1024;
+      unit += 1;
+    }
+    return `${size >= 10 || unit === 0 ? Math.round(size) : size.toFixed(1)} ${units[unit]}`;
   };
   useEffect(() => {
     load().catch((error) => onToast(error.message));
@@ -329,25 +350,60 @@ export function SettingsScreen({
             </SettingsCard>
             <SettingsCard title="Restore an existing dashboard">
               <p>
-                Connect the backup USB drive, then enter the .hdbak file and its
-                recovery password.
+                Connect the backup USB drive, choose a detected backup, then enter
+                its recovery password. You can still type a file path manually if needed.
               </p>
+              <div class="media-list">
+                {backupMedia.map((media) => (
+                  <button
+                    class={media.latest_backup ? "media-card has-backup" : "media-card"}
+                    onClick={async () => {
+                      if (media.latest_backup?.path) {
+                        setRestorePath(media.latest_backup.path);
+                      }
+                      setFoundBackups(
+                        await api<any[]>(
+                          `/backups/discover?path=${encodeURIComponent(media.path)}`
+                        )
+                      );
+                    }}
+                  >
+                    <strong>{media.name}</strong>
+                    <span>{media.path}</span>
+                    <small>
+                      {formatBytes(media.free_bytes)} free
+                      {media.latest_backup
+                        ? ` · latest backup ${new Date(
+                            media.latest_backup.modified * 1000
+                          ).toLocaleDateString()}`
+                        : " · no backups found yet"}
+                    </small>
+                  </button>
+                ))}
+              </div>
+              {!backupMedia.length && (
+                <p class="hint">
+                  No removable backup media found yet. Connect a USB drive and scan again.
+                </p>
+              )}
               <button
                 class="button secondary"
                 onClick={async () => {
                   try {
+                    await refreshBackupMedia();
                     setFoundBackups(await api("/backups/discover"));
                   } catch (error: any) {
                     onToast(error.message);
                   }
                 }}
               >
-                Find backups on connected USB drives
+                Scan connected USB drives
               </button>
               <div class="location-results">
                 {foundBackups.map((backup) => (
                   <button onClick={() => setRestorePath(backup.path)}>
-                    {backup.path}
+                    <strong>{backup.name || backup.path.split(/[\\/]/).pop()}</strong>
+                    <span>{backup.path}</span>
                   </button>
                 ))}
               </div>
@@ -1583,12 +1639,64 @@ export function SettingsScreen({
               Backups are optional. The recovery password is required to restore
               private settings and Apple credentials on a fresh installation.
             </p>
-            <TouchInput
-              label="USB backup folder"
-              value={settings.backup_path || ""}
-              onChange={(value) => setSettings({ ...settings, backup_path: value })}
-              placeholder="/media/dashboard/BACKUPS"
-            />
+            <div class="media-list">
+              {backupMedia.map((media) => (
+                <button
+                  class={
+                    settings.backup_path === media.backup_path
+                      ? "media-card active"
+                      : "media-card"
+                  }
+                  disabled={!media.writable}
+                  onClick={() =>
+                    setSettings({ ...settings, backup_path: media.backup_path })
+                  }
+                >
+                  <strong>{media.name}</strong>
+                  <span>{media.path}</span>
+                  <small>
+                    {media.writable ? "Writable" : "Not writable"} ·{" "}
+                    {formatBytes(media.free_bytes)} free · backups will save to{" "}
+                    {media.backup_path}
+                  </small>
+                </button>
+              ))}
+            </div>
+            {!backupMedia.length && (
+              <p class="hint">
+                No USB backup media found. Connect a drive and scan again, or use
+                the manual folder option below.
+              </p>
+            )}
+            <div class="button-row">
+              <button
+                class="button secondary"
+                onClick={async () => {
+                  try {
+                    await refreshBackupMedia();
+                    onToast("Backup media refreshed");
+                  } catch (error: any) {
+                    onToast(error.message);
+                  }
+                }}
+              >
+                Scan USB drives
+              </button>
+            </div>
+            <details class="advanced-settings">
+              <summary>Manual backup folder</summary>
+              <TouchInput
+                label="USB backup folder"
+                value={settings.backup_path || ""}
+                onChange={(value) => setSettings({ ...settings, backup_path: value })}
+                placeholder="/media/pi/USB/BodaDashBackups"
+              />
+            </details>
+            {settings.backup_path && (
+              <p class="hardware-test-result">
+                Selected backup folder: {settings.backup_path}
+              </p>
+            )}
             <TouchInput
               label="Recovery password"
               value={backupPassword}

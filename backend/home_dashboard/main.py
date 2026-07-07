@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import threading
+import time as monotonic_time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, time, timedelta
@@ -84,6 +85,23 @@ auth = AuthManager(database, secret_store)
 backups = BackupManager(database, config.data_dir)
 services = DashboardServices(database, secret_store, backups, hub)
 logger = logging.getLogger(__name__)
+_response_cache: dict[str, tuple[float, Any]] = {}
+
+
+def cached_value(key: str, ttl_seconds: float, factory):
+    now = monotonic_time.monotonic()
+    cached = _response_cache.get(key)
+    if cached and now - cached[0] < ttl_seconds:
+        return cached[1]
+    value = factory()
+    _response_cache[key] = (now, value)
+    return value
+
+
+def clear_cached_values(prefix: str) -> None:
+    for key in list(_response_cache):
+        if key.startswith(prefix):
+            _response_cache.pop(key, None)
 
 
 def ipv4_interfaces() -> list[dict[str, str]]:
@@ -223,6 +241,170 @@ def network_status_payload() -> dict[str, Any]:
     return payload
 
 
+def cached_network_status_payload() -> dict[str, Any]:
+    return cached_value("network_status", 3.0, network_status_payload)
+
+
+def _safe_resolve(path: Path) -> str:
+    try:
+        return str(path.resolve())
+    except OSError:
+        return str(path)
+
+
+def _is_writable_directory(path: Path) -> bool:
+    if not path.exists() or not path.is_dir():
+        return False
+    probe = path / f".bodadash-write-test-{uuid.uuid4().hex}"
+    try:
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink(missing_ok=True)
+        return True
+    except OSError:
+        try:
+            probe.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False
+
+
+def _backup_files_under(root: Path, limit: int = 50) -> list[dict[str, Any]]:
+    files: list[dict[str, Any]] = []
+    if not root.exists() or not root.is_dir():
+        return files
+    ignored_dirs = {
+        "$recycle.bin",
+        "system volume information",
+        ".spotlight-v100",
+        ".trashes",
+        ".trash-1000",
+    }
+    visited_dirs = 0
+    try:
+        for directory, dirnames, filenames in os.walk(root):
+            visited_dirs += 1
+            if visited_dirs > 5000:
+                break
+            dirnames[:] = [
+                name
+                for name in dirnames
+                if not name.startswith(".") and name.lower() not in ignored_dirs
+            ]
+            for filename in filenames:
+                if not filename.lower().endswith(".hdbak"):
+                    continue
+                path = Path(directory) / filename
+                try:
+                    stat = path.stat()
+                except OSError:
+                    continue
+                files.append(
+                    {
+                        "path": str(path),
+                        "name": filename,
+                        "size": stat.st_size,
+                        "modified": stat.st_mtime,
+                    }
+                )
+                if len(files) >= limit * 2:
+                    break
+            if len(files) >= limit * 2:
+                break
+    except OSError:
+        return files
+    return sorted(files, key=lambda item: item["modified"], reverse=True)[:limit]
+
+
+def _candidate_media_paths(extra_paths: list[Path] | None = None) -> list[Path]:
+    candidates: list[Path] = []
+    system = platform.system()
+
+    def add(path: Path) -> None:
+        if path.exists() and path.is_dir():
+            candidates.append(path)
+
+    if system == "Windows":
+        for letter in "DEFGHIJKLMNOPQRSTUVWXYZ":
+            add(Path(f"{letter}:\\"))
+    else:
+        for base in [Path("/media"), Path("/run/media"), Path("/mnt")]:
+            if not base.exists():
+                continue
+            try:
+                children = [item for item in base.iterdir() if item.is_dir()]
+            except OSError:
+                continue
+            for child in children:
+                if child.name.startswith("."):
+                    continue
+                try:
+                    grandchildren = [
+                        item
+                        for item in child.iterdir()
+                        if item.is_dir() and not item.name.startswith(".")
+                    ]
+                except OSError:
+                    grandchildren = []
+                if base in {Path("/media"), Path("/run/media")} and grandchildren:
+                    for grandchild in grandchildren:
+                        add(grandchild)
+                else:
+                    add(child)
+    configured = database.setting("backup_path", "")
+    if configured:
+        configured_path = Path(configured)
+        add(configured_path if configured_path.is_dir() else configured_path.parent)
+    for path in extra_paths or []:
+        add(path)
+
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for path in candidates:
+        resolved = _safe_resolve(path)
+        if resolved not in seen:
+            seen.add(resolved)
+            unique.append(path)
+    return unique
+
+
+def backup_media_candidates(extra_paths: list[Path] | None = None) -> list[dict[str, Any]]:
+    media: list[dict[str, Any]] = []
+    for path in _candidate_media_paths(extra_paths):
+        backup_path = (
+            path
+            if path.name.lower() in {"bodadashbackups", "backups", "backup"}
+            else path / "BodaDashBackups"
+        )
+        backups_found = _backup_files_under(path, limit=6)
+        try:
+            usage = shutil.disk_usage(str(path))
+            free_bytes = usage.free
+            total_bytes = usage.total
+        except OSError:
+            free_bytes = None
+            total_bytes = None
+        media.append(
+            {
+                "name": path.name or str(path),
+                "path": str(path),
+                "backup_path": str(backup_path),
+                "writable": _is_writable_directory(path),
+                "free_bytes": free_bytes,
+                "total_bytes": total_bytes,
+                "existing_backup_count": len(backups_found),
+                "latest_backup": backups_found[0] if backups_found else None,
+            }
+        )
+    return sorted(
+        media,
+        key=lambda item: (
+            not item["writable"],
+            -int(item["free_bytes"] or 0),
+            item["name"].lower(),
+        ),
+    )
+
+
 def schedule_background(coroutine, label: str) -> None:
     task = asyncio.create_task(coroutine, name=label)
 
@@ -356,7 +538,7 @@ def status(request: Request) -> dict[str, Any]:
 def network_interfaces():
     selected = database.setting("mobile_dash_ipv4", "")
     available = ipv4_interfaces()
-    status_payload = network_status_payload()
+    status_payload = cached_network_status_payload()
     return {
         "interfaces": available,
         "selected": selected,
@@ -371,7 +553,7 @@ def network_interfaces():
 
 @app.get("/api/v1/network/status")
 def network_status():
-    return network_status_payload()
+    return cached_network_status_payload()
 
 
 @app.get("/api/v1/auth/state")
@@ -2073,7 +2255,7 @@ async def set_display_awake_lock(enabled: bool):
 def hardware_devices():
     system = platform.system()
     return {
-        "input_devices": BarcodeMonitor.devices(),
+        "input_devices": cached_value("hardware_input_devices", 10.0, BarcodeMonitor.devices),
         "display_output": database.setting("display_output", "HDMI-A-1"),
         "pir_pin": database.setting("motion_gpio_bcm", 17),
         "platform": system,
@@ -2081,7 +2263,7 @@ def hardware_devices():
         "audio_backend": "alsa" if system == "Linux" else (
             "winsound" if system == "Windows" else "browser"
         ),
-        "audio_outputs": AudioController.outputs(),
+        "audio_outputs": cached_value("hardware_audio_outputs", 10.0, AudioController.outputs),
         "audio_output": database.setting("audio_output", "default"),
         "audio_status": services.audio.status(),
         "system_volume": AudioController.system_volume(),
@@ -2226,6 +2408,7 @@ def connect_wifi(payload: WifiConnect):
         command.append(payload.password)
     try:
         subprocess.run(command, capture_output=True, text=True, timeout=30, check=True)
+        clear_cached_values("network")
         return {"connected": True}
     except subprocess.CalledProcessError as error:
         raise HTTPException(status_code=400, detail=error.stderr.strip()) from error
@@ -2246,7 +2429,8 @@ def update_dns(payload: DnsUpdate):
     ]
     try:
         subprocess.run(command, capture_output=True, text=True, timeout=30, check=True)
-        return network_status_payload()
+        clear_cached_values("network")
+        return cached_network_status_payload()
     except subprocess.CalledProcessError as error:
         raise HTTPException(status_code=400, detail=error.stderr.strip()) from error
 
@@ -2299,17 +2483,24 @@ async def run_backup():
         raise HTTPException(status_code=500, detail=str(error)) from error
 
 
+@app.get("/api/v1/backups/media")
+def backup_media():
+    return backup_media_candidates()
+
+
 @app.get("/api/v1/backups/discover")
 def discover_backups(path: str = ""):
-    root = Path(path or "/media")
-    if not root.exists():
-        return []
-    return [
-        {"path": str(item), "size": item.stat().st_size, "modified": item.stat().st_mtime}
-        for item in sorted(
-            root.rglob("*.hdbak"), key=lambda entry: entry.stat().st_mtime, reverse=True
-        )[:50]
-    ]
+    if path:
+        return _backup_files_under(Path(path), limit=50)
+    discovered: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for media in backup_media_candidates():
+        for backup in _backup_files_under(Path(media["path"]), limit=20):
+            if backup["path"] in seen:
+                continue
+            seen.add(backup["path"])
+            discovered.append({**backup, "media": media["name"], "media_path": media["path"]})
+    return sorted(discovered, key=lambda item: item["modified"], reverse=True)[:50]
 
 
 @app.post("/api/v1/backups/restore")
@@ -2393,40 +2584,43 @@ def exit_kiosk():
 
 @app.get("/api/v1/system/metrics")
 def system_metrics():
-    memory = psutil.virtual_memory()
-    disk = psutil.disk_usage(str(config.data_dir))
-    temperatures = {}
-    try:
-        temperatures = psutil.sensors_temperatures()
-    except Exception:
-        pass
-    temperature = next(
-        (
-            reading.current
-            for readings in temperatures.values()
-            for reading in readings
-            if reading.current is not None
-        ),
-        None,
-    )
-    return {
-        "platform": platform.system(),
-        "cpu_percent": psutil.cpu_percent(interval=0.15),
-        "cpu_count": psutil.cpu_count(),
-        "memory_percent": memory.percent,
-        "memory_used": memory.used,
-        "memory_total": memory.total,
-        "memory_used_gb": round(memory.used / (1024**3), 1),
-        "memory_total_gb": round(memory.total / (1024**3), 1),
-        "storage_percent": disk.percent,
-        "storage_used": disk.used,
-        "storage_total": disk.total,
-        "storage_used_gb": round(disk.used / (1024**3), 1),
-        "storage_total_gb": round(disk.total / (1024**3), 1),
-        "temperature_c": temperature,
-        "cpu_temperature_c": temperature,
-        "boot_time": datetime.fromtimestamp(psutil.boot_time(), UTC).isoformat(),
-    }
+    def collect() -> dict[str, Any]:
+        memory = psutil.virtual_memory()
+        disk = psutil.disk_usage(str(config.data_dir))
+        temperatures = {}
+        try:
+            temperatures = psutil.sensors_temperatures()
+        except Exception:
+            pass
+        temperature = next(
+            (
+                reading.current
+                for readings in temperatures.values()
+                for reading in readings
+                if reading.current is not None
+            ),
+            None,
+        )
+        return {
+            "platform": platform.system(),
+            "cpu_percent": psutil.cpu_percent(interval=None),
+            "cpu_count": psutil.cpu_count(),
+            "memory_percent": memory.percent,
+            "memory_used": memory.used,
+            "memory_total": memory.total,
+            "memory_used_gb": round(memory.used / (1024**3), 1),
+            "memory_total_gb": round(memory.total / (1024**3), 1),
+            "storage_percent": disk.percent,
+            "storage_used": disk.used,
+            "storage_total": disk.total,
+            "storage_used_gb": round(disk.used / (1024**3), 1),
+            "storage_total_gb": round(disk.total / (1024**3), 1),
+            "temperature_c": temperature,
+            "cpu_temperature_c": temperature,
+            "boot_time": datetime.fromtimestamp(psutil.boot_time(), UTC).isoformat(),
+        }
+
+    return cached_value("system_metrics", 2.0, collect)
 
 
 @app.post("/api/v1/system/update")
