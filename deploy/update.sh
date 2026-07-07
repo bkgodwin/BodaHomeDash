@@ -85,6 +85,8 @@ systemctl daemon-reload
 
 write_status "running" "Updating application dependencies…"
 "$APP_DIR/.venv/bin/pip" install --disable-pip-version-check --upgrade "$APP_DIR[pi]"
+write_status "running" "Ensuring USB backup filesystem tools are installed…"
+DEBIAN_FRONTEND=noninteractive apt-get install -y exfatprogs dosfstools
 if ! command -v wlopm >/dev/null 2>&1; then
   DEBIAN_FRONTEND=noninteractive apt-get install -y wlopm || true
 fi
