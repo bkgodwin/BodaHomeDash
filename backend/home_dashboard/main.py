@@ -6,6 +6,7 @@ import logging
 import os
 import platform
 import re
+import html
 import shutil
 import subprocess
 import threading
@@ -15,6 +16,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
 import holidays
@@ -31,7 +33,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
@@ -46,6 +48,8 @@ from .models import (
     CalendarConnect,
     CalendarSelection,
     DnsUpdate,
+    GoogleOAuthConfig,
+    GoogleOAuthStart,
     HardwareTest,
     HouseholdMemberInput,
     LoginRequest,
@@ -72,7 +76,7 @@ from .models import (
     TimerCreate,
     WifiConnect,
 )
-from .providers.calendar import GoogleCalendarProvider, ICloudCalendarProvider
+from .providers.calendar import GoogleCalendarAPIProvider, GoogleCalendarProvider, ICloudCalendarProvider
 from .providers.recipes import normalize_meal
 from .security import AuthManager, SecretStore
 from .services import DashboardServices
@@ -86,6 +90,14 @@ backups = BackupManager(database, config.data_dir)
 services = DashboardServices(database, secret_store, backups, hub)
 logger = logging.getLogger(__name__)
 _response_cache: dict[str, tuple[float, Any]] = {}
+_google_oauth_states: dict[str, dict[str, Any]] = {}
+GOOGLE_OAUTH_SCOPE = " ".join(
+    [
+        "openid",
+        "https://www.googleapis.com/auth/userinfo.email",
+        "https://www.googleapis.com/auth/calendar.readonly",
+    ]
+)
 
 
 def cached_value(key: str, ttl_seconds: float, factory):
@@ -465,7 +477,13 @@ app = FastAPI(
 async def access_control(request: Request, call_next):
     path = request.url.path
     public = (
-        path in {"/api/v1/status", "/api/v1/auth/login", "/api/v1/auth/state"}
+        path
+        in {
+            "/api/v1/status",
+            "/api/v1/auth/login",
+            "/api/v1/auth/state",
+            "/api/v1/calendar/google/callback",
+        }
         or not path.startswith("/api/")
     )
     local = is_local(request)
@@ -605,6 +623,10 @@ def get_settings() -> dict[str, Any]:
         {
             "remote_pin_configured": auth.has_pin(),
             "backup_password_configured": secret_store.get("backup_password") is not None,
+            "google_oauth_client_secret_configured": secret_store.get(
+                "google_oauth_client_secret"
+            )
+            is not None,
             "calendar_accounts": database.all(
                 """SELECT id,provider,display_name,username,enabled,last_sync_at,
                           last_error,created_at,updated_at
@@ -1100,6 +1122,14 @@ async def update_shared_notepad(payload: SharedNotepadInput):
 
 @app.post("/api/v1/calendar/connect")
 async def connect_calendar(payload: CalendarConnect):
+    if payload.provider == "google":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Google no longer supports password-based CalDAV login here. "
+                "Use Connect Google Calendar to authorize with your browser."
+            ),
+        )
     provider = (
         GoogleCalendarProvider(payload.username, payload.app_password)
         if payload.provider == "google"
@@ -1143,6 +1173,174 @@ async def connect_calendar(payload: CalendarConnect):
     calendars = list_calendars()
     schedule_background(services.sync_calendars(), "calendar-connect-sync")
     return {"account_id": account_id, "calendars": calendars}
+
+
+@app.get("/api/v1/calendar/google/status")
+def google_calendar_status():
+    return {
+        "client_id": database.setting("google_oauth_client_id", ""),
+        "client_secret_configured": secret_store.get("google_oauth_client_secret")
+        is not None,
+        "accounts": database.all(
+            """SELECT id,display_name,username,enabled,last_sync_at,last_error
+               FROM calendar_accounts WHERE provider='google' ORDER BY id"""
+        ),
+    }
+
+
+@app.post("/api/v1/calendar/google/config")
+def configure_google_oauth(payload: GoogleOAuthConfig):
+    database.set_settings({"google_oauth_client_id": payload.client_id.strip()})
+    if payload.client_secret:
+        secret_store.set("google_oauth_client_secret", payload.client_secret.strip())
+    return google_calendar_status()
+
+
+@app.post("/api/v1/calendar/google/start")
+def start_google_oauth(payload: GoogleOAuthStart):
+    client_id = database.setting("google_oauth_client_id", "")
+    client_secret = secret_store.get("google_oauth_client_secret")
+    if not client_id or not client_secret:
+        raise HTTPException(
+            status_code=400,
+            detail="Enter and save the Google OAuth Client ID and Client Secret first.",
+        )
+    state = uuid.uuid4().hex
+    _google_oauth_states[state] = {
+        "created_at": monotonic_time.monotonic(),
+        "display_name": payload.display_name or "Google",
+        "redirect_uri": payload.redirect_uri,
+    }
+    # Keep the in-memory state table tidy; OAuth should complete in a few minutes.
+    cutoff = monotonic_time.monotonic() - 600
+    for key, value in list(_google_oauth_states.items()):
+        if value.get("created_at", 0) < cutoff:
+            _google_oauth_states.pop(key, None)
+    params = {
+        "client_id": client_id,
+        "redirect_uri": payload.redirect_uri,
+        "response_type": "code",
+        "scope": GOOGLE_OAUTH_SCOPE,
+        "access_type": "offline",
+        "prompt": "consent",
+        "state": state,
+        "include_granted_scopes": "true",
+    }
+    return {
+        "auth_url": "https://accounts.google.com/o/oauth2/v2/auth?"
+        + urlencode(params),
+        "state": state,
+    }
+
+
+@app.get("/api/v1/calendar/google/callback")
+async def google_calendar_callback(
+    code: str = "",
+    state: str = "",
+    error: str = "",
+):
+    def page(title: str, message: str, ok: bool = False) -> HTMLResponse:
+        color = "#8df2b1" if ok else "#ff9d9d"
+        return HTMLResponse(
+            f"""<!doctype html>
+<html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{html.escape(title)}</title>
+<style>
+body{{margin:0;min-height:100vh;display:grid;place-items:center;background:#071a2d;color:white;font-family:system-ui,sans-serif}}
+main{{max-width:680px;margin:20px;padding:28px;border:1px solid #ffffff29;border-radius:24px;background:#ffffff14;box-shadow:0 20px 70px #0008}}
+h1{{color:{color};margin-top:0}}p{{line-height:1.45}}button{{min-height:44px;border:0;border-radius:12px;padding:0 18px;background:#8bc7ff;color:#06213b;font-weight:700}}
+</style></head><body><main>
+<h1>{html.escape(title)}</h1><p>{html.escape(message)}</p>
+<button onclick="window.close()">Close this window</button>
+</main></body></html>"""
+        )
+
+    if error:
+        return page("Google Calendar not connected", error)
+    state_payload = _google_oauth_states.pop(state, None)
+    if not code or not state_payload:
+        return page(
+            "Google Calendar not connected",
+            "The authorization session expired. Return to BodaDash and try again.",
+        )
+    client_id = database.setting("google_oauth_client_id", "")
+    client_secret = secret_store.get("google_oauth_client_secret")
+    if not client_id or not client_secret:
+        return page(
+            "Google Calendar not connected",
+            "Google OAuth credentials are not configured in BodaDash.",
+        )
+    token_response = await services.client.post(
+        "https://oauth2.googleapis.com/token",
+        data={
+            "code": code,
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "redirect_uri": state_payload["redirect_uri"],
+            "grant_type": "authorization_code",
+        },
+    )
+    if token_response.status_code >= 400:
+        return page(
+            "Google Calendar not connected",
+            f"Google rejected the authorization code: {token_response.text[:300]}",
+        )
+    token = token_response.json()
+    access_token = token.get("access_token")
+    if not access_token or not token.get("refresh_token"):
+        return page(
+            "Google Calendar not connected",
+            "Google did not return a refresh token. Try again and approve access when prompted.",
+        )
+    user_response = await services.client.get(
+        "https://www.googleapis.com/oauth2/v2/userinfo",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    user_info = user_response.json() if user_response.status_code < 400 else {}
+    username = user_info.get("email") or "Google Calendar"
+    now = utcnow()
+    existing = database.one(
+        "SELECT id FROM calendar_accounts WHERE provider='google' AND username=?",
+        (username,),
+    )
+    if existing:
+        account_id = existing["id"]
+        database.execute(
+            """UPDATE calendar_accounts
+               SET display_name=?,enabled=1,updated_at=?,last_error=NULL WHERE id=?""",
+            (state_payload["display_name"], now, account_id),
+        )
+    else:
+        cursor = database.execute(
+            """INSERT INTO calendar_accounts(
+                provider,display_name,username,created_at,updated_at
+            ) VALUES('google',?,?,?,?)""",
+            (state_payload["display_name"], username, now, now),
+        )
+        account_id = cursor.lastrowid
+    token["expires_at"] = monotonic_time.time() + int(token.get("expires_in", 3600))
+    secret_store.set(f"calendar_google_token_{account_id}", json.dumps(token))
+    secret_store.delete(f"calendar_password_{account_id}")
+    provider = GoogleCalendarAPIProvider(access_token, services.client)
+    account = database.one("SELECT * FROM calendar_accounts WHERE id=?", (account_id,))
+    try:
+        await services._rediscover_account(account, provider)
+    except Exception as discover_error:
+        database.execute(
+            """UPDATE calendar_accounts SET last_error=?,updated_at=? WHERE id=?""",
+            (str(discover_error), utcnow(), account_id),
+        )
+        return page(
+            "Google Calendar connected with a warning",
+            f"Authorization succeeded, but calendar discovery failed: {discover_error}",
+        )
+    schedule_background(services.sync_calendars(), "google-calendar-connect-sync")
+    await hub.broadcast("calendar.discovery.updated", {"provider": "google"})
+    return page(
+        "Google Calendar connected",
+        "You can close this window and return to BodaDash to choose visible calendars.",
+        ok=True,
+    )
 
 
 @app.get("/api/v1/calendar/calendars")
@@ -1192,6 +1390,7 @@ async def select_calendars(payload: CalendarSelection):
 async def delete_calendar_account(account_id: int):
     database.execute("DELETE FROM calendar_accounts WHERE id=?", (account_id,))
     secret_store.delete(f"calendar_password_{account_id}")
+    secret_store.delete(f"calendar_google_token_{account_id}")
     await hub.broadcast("calendar.updated", {})
     return Response(status_code=204)
 

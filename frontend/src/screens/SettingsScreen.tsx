@@ -33,6 +33,9 @@ export function SettingsScreen({
   const [calendarEmail, setCalendarEmail] = useState("");
   const [calendarPassword, setCalendarPassword] = useState("");
   const [calendarName, setCalendarName] = useState("iCloud");
+  const [googleClientId, setGoogleClientId] = useState("");
+  const [googleClientSecret, setGoogleClientSecret] = useState("");
+  const [googleOauthStatus, setGoogleOauthStatus] = useState<any>(null);
   const [calendars, setCalendars] = useState<any[]>([]);
   const [locationSearch, setLocationSearch] = useState("");
   const [locationResults, setLocationResults] = useState<any[]>([]);
@@ -86,7 +89,8 @@ export function SettingsScreen({
       syncValues,
       interfaceValues,
       memberValues,
-      backupMediaValues
+      backupMediaValues,
+      googleStatusValues
     ] = await Promise.all([
       api<Settings>("/settings"),
       api<any[]>("/calendar/calendars"),
@@ -94,7 +98,8 @@ export function SettingsScreen({
       api<any>("/sync/status"),
       api<any>("/network/interfaces"),
       api<HouseholdMember[]>("/household/members"),
-      api<any[]>("/backups/media").catch(() => [])
+      api<any[]>("/backups/media").catch(() => []),
+      api<any>("/calendar/google/status").catch(() => null)
     ]);
     setSettings(values);
     setCalendars(calendarValues);
@@ -103,6 +108,8 @@ export function SettingsScreen({
     setInterfaces(interfaceValues.interfaces || []);
     setNetworkInfo(interfaceValues);
     setBackupMedia(backupMediaValues);
+    setGoogleOauthStatus(googleStatusValues);
+    setGoogleClientId(googleStatusValues?.client_id || values.google_oauth_client_id || "");
     const statusValue = interfaceValues.status || null;
     setNetworkStatus(statusValue);
     setDnsAutomatic(statusValue?.dns?.automatic !== false);
@@ -277,6 +284,54 @@ export function SettingsScreen({
       setCalendarEmail("");
       onToast(`${calendarProvider === "google" ? "Google" : "iCloud"} connected`);
     } catch (error: any) {
+      onToast(error.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const connectGoogleCalendar = async () => {
+    const popup = window.open("", "bodadash-google-calendar", "width=720,height=820");
+    setBusy(true);
+    try {
+      const status = await api<any>("/calendar/google/config", {
+        method: "POST",
+        ...jsonBody({
+          client_id: googleClientId,
+          client_secret: googleClientSecret || undefined
+        })
+      });
+      setGoogleOauthStatus(status);
+      setGoogleClientSecret("");
+      const redirectUri = `${window.location.origin}/api/v1/calendar/google/callback`;
+      const result = await api<any>("/calendar/google/start", {
+        method: "POST",
+        ...jsonBody({
+          display_name: calendarName || "Google",
+          redirect_uri: redirectUri
+        })
+      });
+      if (popup) {
+        popup.location.href = result.auth_url;
+        popup.focus();
+      } else {
+        window.location.href = result.auth_url;
+      }
+      onToast("Finish Google authorization in the browser window");
+      const started = Date.now();
+      const timer = window.setInterval(async () => {
+        if (Date.now() - started > 120_000 || popup?.closed) {
+          window.clearInterval(timer);
+        }
+        try {
+          setCalendars(await api<any[]>("/calendar/calendars"));
+          setGoogleOauthStatus(await api<any>("/calendar/google/status"));
+        } catch {
+          // The callback may still be in progress; the manual refresh button remains available.
+        }
+      }, 3000);
+    } catch (error: any) {
+      if (popup) popup.close();
       onToast(error.message);
     } finally {
       setBusy(false);
@@ -785,33 +840,89 @@ export function SettingsScreen({
                 value={calendarName}
                 onChange={setCalendarName}
               />
-              <TouchInput
-                label={calendarProvider === "google" ? "Google account email" : "Apple Account email"}
-                value={calendarEmail}
-                onChange={setCalendarEmail}
-              />
-              <TouchInput
-                label={
-                  calendarProvider === "google"
-                    ? "Google app password"
-                    : "Apple app-specific password"
-                }
-                value={calendarPassword}
-                onChange={setCalendarPassword}
-                secret
-              />
-              <p class="hint">
-                {calendarProvider === "google"
-                  ? "Google CalDAV access usually requires a Google app password when 2-Step Verification is enabled."
-                  : "Use an Apple app-specific password, not your normal Apple Account password."}
-              </p>
-              <button
-                class="button primary"
-                disabled={!calendarEmail || !calendarPassword || busy}
-                onClick={connectCalendar}
-              >
-                Test and connect
-              </button>
+              {calendarProvider === "icloud" ? (
+                <>
+                  <TouchInput
+                    label="Apple Account email"
+                    value={calendarEmail}
+                    onChange={setCalendarEmail}
+                  />
+                  <TouchInput
+                    label="Apple app-specific password"
+                    value={calendarPassword}
+                    onChange={setCalendarPassword}
+                    secret
+                    revealable
+                  />
+                  <p class="hint">
+                    Use an Apple app-specific password, not your normal Apple
+                    Account password.
+                  </p>
+                  <button
+                    class="button primary"
+                    disabled={!calendarEmail || !calendarPassword || busy}
+                    onClick={connectCalendar}
+                  >
+                    Test and connect iCloud
+                  </button>
+                </>
+              ) : (
+                <>
+                  <TouchInput
+                    label="Google OAuth Client ID"
+                    value={googleClientId}
+                    onChange={setGoogleClientId}
+                    placeholder="Paste the Client ID from Google Cloud Console"
+                  />
+                  <TouchInput
+                    label={
+                      googleOauthStatus?.client_secret_configured
+                        ? "Google OAuth Client Secret (saved — enter to replace)"
+                        : "Google OAuth Client Secret"
+                    }
+                    value={googleClientSecret}
+                    onChange={setGoogleClientSecret}
+                    placeholder={
+                      googleOauthStatus?.client_secret_configured
+                        ? "Already saved"
+                        : "Paste the Client Secret"
+                    }
+                    secret
+                    revealable
+                  />
+                  <p class="hint">
+                    Authorized redirect URI for Google Cloud:{" "}
+                    <code>{`${window.location.origin}/api/v1/calendar/google/callback`}</code>
+                  </p>
+                  <p class="hint">
+                    Google Calendar uses browser authorization. App passwords are
+                    no longer used for Google.
+                  </p>
+                  {googleOauthStatus?.accounts?.length > 0 && (
+                    <div class="sync-log">
+                      {googleOauthStatus.accounts.map((account: any) => (
+                        <article>
+                          <strong>{account.display_name}</strong>
+                          <span>{account.username}</span>
+                          {account.last_error && <small>{account.last_error}</small>}
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                  <button
+                    class="button primary"
+                    disabled={
+                      !googleClientId ||
+                      (!googleClientSecret &&
+                        !googleOauthStatus?.client_secret_configured) ||
+                      busy
+                    }
+                    onClick={connectGoogleCalendar}
+                  >
+                    Connect Google Calendar
+                  </button>
+                </>
+              )}
             </SettingsCard>
             {calendars.length > 0 && (
               <SettingsCard title="Visible calendars">

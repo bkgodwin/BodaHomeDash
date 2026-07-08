@@ -1,13 +1,55 @@
 from datetime import UTC, datetime
 
 from home_dashboard.providers import calendar as calendar_module
-from home_dashboard.providers.calendar import GoogleCalendarProvider, ICloudCalendarProvider
+from home_dashboard.providers.calendar import (
+    GoogleCalendarAPIProvider,
+    GoogleCalendarProvider,
+    ICloudCalendarProvider,
+)
 
 
 def test_google_calendar_provider_uses_google_caldav_endpoint():
     provider = GoogleCalendarProvider("person@gmail.com", "app-password")
 
     assert provider.server == "https://apidata.googleusercontent.com/caldav/v2/"
+
+
+def test_google_api_provider_normalizes_calendar_and_events():
+    provider = GoogleCalendarAPIProvider("token")
+    event = provider._normalize_event(
+        {
+            "id": "abc",
+            "iCalUID": "ical-abc",
+            "summary": "Dinner",
+            "description": "Bring dessert",
+            "location": "Kitchen",
+            "start": {"dateTime": "2026-07-07T18:00:00-05:00"},
+            "end": {"dateTime": "2026-07-07T19:00:00-05:00"},
+            "originalStartTime": {"dateTime": "2026-07-07T18:00:00-05:00"},
+            "etag": "etag",
+        }
+    )
+
+    assert event["uid"] == "ical-abc"
+    assert event["title"] == "Dinner"
+    assert event["all_day"] is False
+    assert event["starts_at"].startswith("2026-07-07T18:00:00")
+
+
+def test_google_api_provider_normalizes_all_day_event():
+    provider = GoogleCalendarAPIProvider("token")
+    event = provider._normalize_event(
+        {
+            "id": "abc",
+            "summary": "Holiday",
+            "start": {"date": "2026-07-04"},
+            "end": {"date": "2026-07-05"},
+        }
+    )
+
+    assert event["all_day"] is True
+    assert event["starts_at"].startswith("2026-07-04T00:00:00")
+    assert event["ends_at"].startswith("2026-07-05T00:00:00")
 
 
 def test_event_fetch_uses_discovered_icloud_shard(monkeypatch):

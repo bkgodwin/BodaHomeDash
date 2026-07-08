@@ -11,6 +11,7 @@ interface Props {
   placeholder?: string;
   multiline?: boolean;
   autocomplete?: string;
+  revealable?: boolean;
 }
 
 export function TouchInput({
@@ -20,9 +21,11 @@ export function TouchInput({
   secret,
   placeholder,
   multiline = false,
-  autocomplete = "off"
+  autocomplete = "off",
+  revealable = false
 }: Props) {
   const [open, setOpen] = useState(false);
+  const [revealed, setRevealed] = useState(false);
   const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
   const modalInputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
   const openKeyboard = () => {
@@ -47,12 +50,27 @@ export function TouchInput({
             rows={3}
           />
         ) : (
-          <input
-            {...common}
-            ref={inputRef as { current: HTMLInputElement | null }}
-            type={secret ? "password" : "text"}
-            autocomplete={autocomplete}
-          />
+          <div class="touch-input-row">
+            <input
+              {...common}
+              ref={inputRef as { current: HTMLInputElement | null }}
+              type={secret && !revealed ? "password" : "text"}
+              autocomplete={autocomplete}
+            />
+            {secret && revealable && (
+              <button
+                type="button"
+                class="inline-reveal-button"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setRevealed(!revealed);
+                }}
+              >
+                {revealed ? "Hide" : "Show"}
+              </button>
+            )}
+          </div>
         )}
       </label>
       {open && (
@@ -72,21 +90,32 @@ export function TouchInput({
               }
             />
           ) : (
-            <input
-              ref={modalInputRef as { current: HTMLInputElement | null }}
-              class="entry-native-input"
-              type={secret ? "password" : "text"}
-              value={value}
-              placeholder={placeholder}
-              autocomplete={autocomplete}
-              autofocus
-              onInput={(event) =>
-                onChange((event.currentTarget as HTMLInputElement).value)
-              }
-              onKeyDown={(event) => {
-                if (event.key === "Enter") setOpen(false);
-              }}
-            />
+            <div class="modal-input-row">
+              <input
+                ref={modalInputRef as { current: HTMLInputElement | null }}
+                class="entry-native-input"
+                type={secret && !revealed ? "password" : "text"}
+                value={value}
+                placeholder={placeholder}
+                autocomplete={autocomplete}
+                autofocus
+                onInput={(event) =>
+                  onChange((event.currentTarget as HTMLInputElement).value)
+                }
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") setOpen(false);
+                }}
+              />
+              {secret && revealable && (
+                <button
+                  type="button"
+                  class="button secondary modal-reveal-button"
+                  onClick={() => setRevealed(!revealed)}
+                >
+                  {revealed ? "Hide" : "Show"}
+                </button>
+              )}
+            </div>
           )}
           <TouchKeyboard
             value={value}

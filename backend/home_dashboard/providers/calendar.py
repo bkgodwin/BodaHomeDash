@@ -4,8 +4,10 @@ import asyncio
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
+from urllib.parse import quote
 
 import caldav
+import httpx
 import recurring_ical_events
 from icalendar import Calendar
 
@@ -135,3 +137,122 @@ class ICloudCalendarProvider(CalDAVCalendarProvider):
 class GoogleCalendarProvider(CalDAVCalendarProvider):
     name = "Google"
     server = "https://apidata.googleusercontent.com/caldav/v2/"
+
+
+class GoogleCalendarAPIProvider:
+    """Google Calendar API adapter using OAuth access tokens."""
+
+    name = "Google"
+    calendar_list_url = "https://www.googleapis.com/calendar/v3/users/me/calendarList"
+    events_url = "https://www.googleapis.com/calendar/v3/calendars/{calendar_id}/events"
+
+    def __init__(self, access_token: str, client: httpx.AsyncClient | None = None):
+        self.access_token = access_token
+        self.client = client
+
+    @property
+    def headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.access_token}"}
+
+    async def _get(self, url: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        if self.client:
+            response = await self.client.get(url, params=params, headers=self.headers)
+        else:
+            async with httpx.AsyncClient(timeout=20) as client:
+                response = await client.get(url, params=params, headers=self.headers)
+        response.raise_for_status()
+        return response.json()
+
+    async def discover(self) -> list[RemoteCalendar]:
+        calendars: list[RemoteCalendar] = []
+        page_token = None
+        while True:
+            params = {
+                "minAccessRole": "reader",
+                "showDeleted": "false",
+                "showHidden": "true",
+                "maxResults": 250,
+            }
+            if page_token:
+                params["pageToken"] = page_token
+            payload = await self._get(self.calendar_list_url, params=params)
+            for item in payload.get("items", []):
+                calendar_id = str(item.get("id", ""))
+                if not calendar_id:
+                    continue
+                access_role = item.get("accessRole", "reader")
+                calendars.append(
+                    RemoteCalendar(
+                        remote_id=calendar_id,
+                        name=str(item.get("summary") or calendar_id),
+                        url=calendar_id,
+                        shared=not bool(item.get("primary")),
+                        read_only=access_role not in {"owner", "writer"},
+                    )
+                )
+            page_token = payload.get("nextPageToken")
+            if not page_token:
+                break
+        return calendars
+
+    async def events(
+        self, calendar_url: str, starts: datetime, ends: datetime
+    ) -> list[dict[str, Any]]:
+        events: list[dict[str, Any]] = []
+        page_token = None
+        url = self.events_url.format(calendar_id=quote(calendar_url, safe=""))
+        while True:
+            params = {
+                "timeMin": starts.isoformat().replace("+00:00", "Z"),
+                "timeMax": ends.isoformat().replace("+00:00", "Z"),
+                "singleEvents": "true",
+                "orderBy": "startTime",
+                "showDeleted": "false",
+                "maxResults": 2500,
+            }
+            if page_token:
+                params["pageToken"] = page_token
+            payload = await self._get(url, params=params)
+            for item in payload.get("items", []):
+                parsed = self._normalize_event(item)
+                if parsed:
+                    events.append(parsed)
+            page_token = payload.get("nextPageToken")
+            if not page_token:
+                break
+        return events
+
+    def _normalize_event(self, item: dict[str, Any]) -> dict[str, Any] | None:
+        start_payload = item.get("start") or {}
+        end_payload = item.get("end") or {}
+        start_value = start_payload.get("dateTime") or start_payload.get("date")
+        end_value = end_payload.get("dateTime") or end_payload.get("date") or start_value
+        if not start_value:
+            return None
+        all_day = "date" in start_payload and "dateTime" not in start_payload
+        recurrence_payload = item.get("originalStartTime") or {}
+        recurrence_value = (
+            recurrence_payload.get("dateTime") or recurrence_payload.get("date") or ""
+        )
+        return {
+            "uid": str(item.get("iCalUID") or item.get("id") or ""),
+            "recurrence_id": str(recurrence_value),
+            "title": str(item.get("summary") or "Untitled event"),
+            "description": str(item.get("description") or ""),
+            "location": str(item.get("location") or ""),
+            "starts_at": self._parse_google_time(start_value, all_day).isoformat(),
+            "ends_at": self._parse_google_time(end_value, all_day).isoformat(),
+            "all_day": all_day,
+            "etag": item.get("etag"),
+            "raw_ical": str(item),
+        }
+
+    @staticmethod
+    def _parse_google_time(value: str, all_day: bool) -> datetime:
+        if all_day:
+            return datetime.combine(date.fromisoformat(value), time.min, tzinfo=UTC)
+        normalized = value.replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(normalized)
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=UTC)
+        return parsed

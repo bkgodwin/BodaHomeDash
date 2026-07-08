@@ -202,6 +202,24 @@ def test_sync_diagnostics_endpoint(client):
     assert {"providers", "log"} <= response.json().keys()
 
 
+def test_google_calendar_oauth_status_and_legacy_password_message(client):
+    status = client.get("/api/v1/calendar/google/status")
+    assert status.status_code == 200
+    assert {"client_id", "client_secret_configured", "accounts"} <= status.json().keys()
+
+    response = client.post(
+        "/api/v1/calendar/connect",
+        json={
+            "provider": "google",
+            "username": "person@gmail.com",
+            "app_password": "correct-but-legacy",
+            "display_name": "Google",
+        },
+    )
+    assert response.status_code == 400
+    assert "authorize with your browser" in response.json()["detail"]
+
+
 def test_pi_diagnostic_shapes(client):
     hardware = client.get("/api/v1/hardware/devices")
     assert hardware.status_code == 200

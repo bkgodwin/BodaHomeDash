@@ -345,6 +345,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "completed_reminders_last": True,
     "remote_access_enabled": False,
     "mobile_dash_ipv4": "",
+    "google_oauth_client_id": "",
     "backup_enabled": False,
     "backup_path": "",
     "backup_retention": 7,

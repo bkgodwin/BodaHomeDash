@@ -18,6 +18,7 @@ from .hardware import AudioController, BarcodeMonitor, DisplayController, PIRMon
 from .providers.barcode import OpenFoodFactsProvider
 from .providers.calendar import (
     CalDAVCalendarProvider,
+    GoogleCalendarAPIProvider,
     GoogleCalendarProvider,
     ICloudCalendarProvider,
 )
@@ -83,6 +84,53 @@ class DashboardServices:
         if provider_name == "google":
             return GoogleCalendarProvider(username, password)
         return ICloudCalendarProvider(username, password)
+
+    async def google_access_token_for(self, account: dict[str, Any]) -> str:
+        raw_token = self.secrets.get(f"calendar_google_token_{account['id']}")
+        if not raw_token:
+            raise RuntimeError(
+                "Google Calendar needs to be reconnected with browser authorization."
+            )
+        try:
+            token = json.loads(raw_token)
+        except json.JSONDecodeError as error:
+            raise RuntimeError("Stored Google authorization is unreadable.") from error
+        expires_at = float(token.get("expires_at") or 0)
+        if token.get("access_token") and expires_at > time.time() + 90:
+            return str(token["access_token"])
+
+        client_id = self.database.setting("google_oauth_client_id", "")
+        client_secret = self.secrets.get("google_oauth_client_secret")
+        refresh_token = token.get("refresh_token")
+        if not client_id or not client_secret or not refresh_token:
+            raise RuntimeError(
+                "Google OAuth credentials are incomplete. Reconnect Google Calendar."
+            )
+        response = await self.client.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "refresh_token": refresh_token,
+                "grant_type": "refresh_token",
+            },
+        )
+        if response.status_code >= 400:
+            raise RuntimeError(
+                "Google authorization expired or was revoked. Reconnect Google Calendar."
+            )
+        refreshed = response.json()
+        token.update(
+            {
+                "access_token": refreshed["access_token"],
+                "expires_at": time.time() + int(refreshed.get("expires_in", 3600)),
+                "scope": refreshed.get("scope", token.get("scope", "")),
+            }
+        )
+        if refreshed.get("refresh_token"):
+            token["refresh_token"] = refreshed["refresh_token"]
+        self.secrets.set(f"calendar_google_token_{account['id']}", json.dumps(token))
+        return str(token["access_token"])
 
     async def start(self) -> None:
         self.hub.loop = asyncio.get_running_loop()
@@ -436,21 +484,26 @@ class DashboardServices:
                 "SELECT * FROM calendar_accounts WHERE enabled=1"
             )
             for account in accounts:
-                password = self.secrets.get(f"calendar_password_{account['id']}")
-                if not password:
-                    continue
-                provider = self.calendar_provider_for(
-                    account["provider"], account["username"], password
-                )
-                await self._rediscover_account(account, provider)
-                calendars = self.database.all(
-                    """SELECT * FROM calendars
-                       WHERE account_id=? AND enabled=1 AND available=1""",
-                    (account["id"],),
-                )
-                starts = datetime.now(UTC) - timedelta(days=62)
-                ends = datetime.now(UTC) + timedelta(days=550)
                 try:
+                    if account["provider"] == "google":
+                        provider = GoogleCalendarAPIProvider(
+                            await self.google_access_token_for(account), self.client
+                        )
+                    else:
+                        password = self.secrets.get(f"calendar_password_{account['id']}")
+                        if not password:
+                            continue
+                        provider = self.calendar_provider_for(
+                            account["provider"], account["username"], password
+                        )
+                    await self._rediscover_account(account, provider)
+                    calendars = self.database.all(
+                        """SELECT * FROM calendars
+                           WHERE account_id=? AND enabled=1 AND available=1""",
+                        (account["id"],),
+                    )
+                    starts = datetime.now(UTC) - timedelta(days=62)
+                    ends = datetime.now(UTC) + timedelta(days=550)
                     for calendar in calendars:
                         events = await provider.events(
                             calendar["remote_id"], starts, ends
@@ -509,14 +562,20 @@ class DashboardServices:
             "SELECT * FROM calendar_accounts WHERE enabled=1"
         )
         for account in accounts:
-            password = self.secrets.get(f"calendar_password_{account['id']}")
-            if not password:
-                continue
+            if account["provider"] == "google":
+                provider = GoogleCalendarAPIProvider(
+                    await self.google_access_token_for(account), self.client
+                )
+            else:
+                password = self.secrets.get(f"calendar_password_{account['id']}")
+                if not password:
+                    continue
+                provider = self.calendar_provider_for(
+                    account["provider"], account["username"], password
+                )
             await self._rediscover_account(
                 account,
-                self.calendar_provider_for(
-                    account["provider"], account["username"], password
-                ),
+                provider,
             )
         return self.database.all(
             """SELECT c.*,a.display_name AS account_name,a.provider
@@ -527,7 +586,7 @@ class DashboardServices:
     async def _rediscover_account(
         self,
         account: dict[str, Any],
-        provider: CalDAVCalendarProvider,
+        provider: CalDAVCalendarProvider | GoogleCalendarAPIProvider,
     ) -> None:
         remote_calendars = await provider.discover()
         existing_count = self.database.one(

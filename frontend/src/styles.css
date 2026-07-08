@@ -1153,6 +1153,33 @@ select:focus-visible {
   resize: vertical;
 }
 
+.touch-input-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.inline-reveal-button {
+  min-height: 34px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 10px;
+  padding: 0 12px;
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text);
+  font-weight: 800;
+}
+
+.modal-input-row {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.modal-reveal-button {
+  min-width: 96px;
+}
+
 .native-touch-field input::placeholder,
 .native-touch-field textarea::placeholder {
   color: var(--text-muted);

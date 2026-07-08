@@ -226,6 +226,16 @@ class CalendarConnect(BaseModel):
     display_name: str = Field(default="iCloud", max_length=100)
 
 
+class GoogleOAuthConfig(BaseModel):
+    client_id: str = Field(min_length=20, max_length=300)
+    client_secret: str | None = Field(default=None, min_length=4, max_length=300)
+
+
+class GoogleOAuthStart(BaseModel):
+    display_name: str = Field(default="Google", max_length=100)
+    redirect_uri: str = Field(min_length=10, max_length=500)
+
+
 class CalendarSelection(BaseModel):
     enabled_ids: list[int]
     colors: dict[int, str] = {}
