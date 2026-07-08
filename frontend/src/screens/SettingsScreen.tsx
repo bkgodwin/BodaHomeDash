@@ -307,19 +307,29 @@ export function SettingsScreen({
     }
   };
 
+  const saveGoogleOAuthConfig = async () => {
+    const status = await api<any>("/calendar/google/config", {
+      method: "POST",
+      ...jsonBody({
+        client_id: googleClientId,
+        client_secret: googleClientSecret || undefined
+      })
+    });
+    setGoogleOauthStatus(status);
+    setGoogleClientSecret("");
+    return status;
+  };
+
   const connectGoogleCalendar = async () => {
-    const popup = window.open("", "bodadash-google-calendar", "width=720,height=820");
-    setBusy(true);
+    let popup: Window | null = null;
     try {
-      const status = await api<any>("/calendar/google/config", {
-        method: "POST",
-        ...jsonBody({
-          client_id: googleClientId,
-          client_secret: googleClientSecret || undefined
-        })
-      });
-      setGoogleOauthStatus(status);
-      setGoogleClientSecret("");
+      setBusy(true);
+      await saveGoogleOAuthConfig();
+      if (calendarOnly) {
+        onToast("Google credentials saved. Authorize Google from the Pi kiosk.");
+        return;
+      }
+      popup = window.open("", "bodadash-google-calendar", "width=720,height=820");
       const redirectUri = `${window.location.origin}/api/v1/calendar/google/callback`;
       const result = await api<any>("/calendar/google/start", {
         method: "POST",
@@ -374,6 +384,10 @@ export function SettingsScreen({
   if (!Object.keys(settings).length) {
     return <main class="page-screen glass loading">Loading settings…</main>;
   }
+
+  const googleRedirectHint = calendarOnly
+    ? "http://127.0.0.1:8765/api/v1/calendar/google/callback"
+    : `${window.location.origin}/api/v1/calendar/google/callback`;
 
   return (
     <main class={`page-screen settings-screen glass ${setupMode ? "setup-mode" : ""} ${calendarOnly ? "calendar-only-settings" : ""}`}>
@@ -915,8 +929,17 @@ export function SettingsScreen({
                   />
                   <p class="hint">
                     Authorized redirect URI for Google Cloud:{" "}
-                    <code>{`${window.location.origin}/api/v1/calendar/google/callback`}</code>
+                    <code>{googleRedirectHint}</code>
                   </p>
+                  {calendarOnly && (
+                    <p class="hardware-test-result">
+                      Mobile can save the Client ID and Secret, but Google
+                      authorization must be started from the Pi kiosk. Add the
+                      Pi localhost redirect URI in Google Cloud:
+                      {" "}
+                      <code>{googleRedirectHint}</code>
+                    </p>
+                  )}
                   <p class="hint">
                     Google Calendar uses browser authorization. App passwords are
                     no longer used for Google.
@@ -942,7 +965,9 @@ export function SettingsScreen({
                     }
                     onClick={connectGoogleCalendar}
                   >
-                    Connect Google Calendar
+                    {calendarOnly
+                      ? "Save Google OAuth credentials"
+                      : "Connect Google Calendar"}
                   </button>
                 </>
               )}

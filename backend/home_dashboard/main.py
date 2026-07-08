@@ -1194,7 +1194,15 @@ def configure_google_oauth(payload: GoogleOAuthConfig):
 
 
 @app.post("/api/v1/calendar/google/start")
-def start_google_oauth(payload: GoogleOAuthStart):
+def start_google_oauth(payload: GoogleOAuthStart, request: Request):
+    if not is_local(request):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Google authorization must be started from the Raspberry Pi kiosk "
+                "so the redirect uses localhost instead of a private network IP."
+            ),
+        )
     client_id = database.setting("google_oauth_client_id", "")
     client_secret = secret_store.get("google_oauth_client_secret")
     if not client_id or not client_secret:
