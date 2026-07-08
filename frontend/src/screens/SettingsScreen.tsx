@@ -16,6 +16,7 @@ interface Props {
   onSetupAbort?: () => void;
   onSetupComplete?: () => void | Promise<void>;
   setupMode?: boolean;
+  calendarOnly?: boolean;
 }
 
 type Settings = Record<string, any>;
@@ -25,10 +26,11 @@ export function SettingsScreen({
   onSetupStart,
   onSetupAbort,
   onSetupComplete,
-  setupMode = false
+  setupMode = false,
+  calendarOnly = false
 }: Props) {
   const [settings, setSettings] = useState<Settings>({});
-  const [tab, setTab] = useState(setupMode ? "welcome" : "general");
+  const [tab, setTab] = useState(setupMode ? "welcome" : calendarOnly ? "calendar" : "general");
   const [calendarProvider, setCalendarProvider] = useState<"icloud" | "google">("icloud");
   const [calendarEmail, setCalendarEmail] = useState("");
   const [calendarPassword, setCalendarPassword] = useState("");
@@ -82,6 +84,21 @@ export function SettingsScreen({
   );
 
   const load = async () => {
+    if (calendarOnly) {
+      const [calendarValues, googleStatusValues] = await Promise.all([
+        api<any[]>("/calendar/calendars"),
+        api<any>("/calendar/google/status").catch(() => null)
+      ]);
+      setSettings({
+        google_oauth_client_id: googleStatusValues?.client_id || "",
+        google_oauth_client_secret_configured:
+          googleStatusValues?.client_secret_configured || false
+      });
+      setCalendars(calendarValues);
+      setGoogleOauthStatus(googleStatusValues);
+      setGoogleClientId(googleStatusValues?.client_id || "");
+      return;
+    }
     const [
       values,
       calendarValues,
@@ -338,7 +355,9 @@ export function SettingsScreen({
     }
   };
 
-  const tabs = setupMode
+  const tabs = calendarOnly
+    ? ["calendar"]
+    : setupMode
     ? ["welcome", "location", "calendar", "hardware", "security", "finish"]
     : [
         "general",
@@ -357,27 +376,31 @@ export function SettingsScreen({
   }
 
   return (
-    <main class={`page-screen settings-screen glass ${setupMode ? "setup-mode" : ""}`}>
+    <main class={`page-screen settings-screen glass ${setupMode ? "setup-mode" : ""} ${calendarOnly ? "calendar-only-settings" : ""}`}>
       <header class="page-header">
         <div>
-          <h1>{setupMode ? "Welcome Home" : "Settings"}</h1>
+          <h1>{setupMode ? "Welcome Home" : calendarOnly ? "Calendar Settings" : "Settings"}</h1>
           <p>
             {setupMode
               ? "A few steps will prepare your dashboard."
-              : "Calendar, weather, hardware and security"}
+              : calendarOnly
+                ? "Connect calendar accounts and choose visible calendars."
+                : "Calendar, weather, hardware and security"}
           </p>
         </div>
       </header>
-      <nav class="settings-tabs">
-        {tabs.map((name) => (
-          <button
-            class={tab === name ? "active" : ""}
-            onClick={() => setTab(name)}
-          >
-            {name[0].toUpperCase() + name.slice(1)}
-          </button>
-        ))}
-      </nav>
+      {!calendarOnly && (
+        <nav class="settings-tabs">
+          {tabs.map((name) => (
+            <button
+              class={tab === name ? "active" : ""}
+              onClick={() => setTab(name)}
+            >
+              {name[0].toUpperCase() + name.slice(1)}
+            </button>
+          ))}
+        </nav>
+      )}
       <div class="settings-content">
         {tab === "welcome" && (
           <>

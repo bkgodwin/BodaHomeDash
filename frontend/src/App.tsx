@@ -492,14 +492,12 @@ export function App() {
         >
           <span><WeatherIcon code={0} /></span> Weather
         </button>
-        {status.local && (
-          <button
-            class={screen === "settings" ? "active" : ""}
-            onClick={() => setScreen("settings")}
-          >
-            <span>⚙</span> Settings
-          </button>
-        )}
+        <button
+          class={screen === "settings" ? "active" : ""}
+          onClick={() => setScreen("settings")}
+        >
+          <span>⚙</span> {status.local ? "Settings" : "Calendar Settings"}
+        </button>
       </nav>
       <div class="screen-host">
         {screen === "home" && (
@@ -609,7 +607,7 @@ export function App() {
           />
         )}
         {screen === "settings" && (
-          <SettingsScreen onToast={showToast} />
+          <SettingsScreen onToast={showToast} calendarOnly={!status.local} />
         )}
       </div>
       {screen === "home" && (

@@ -489,9 +489,6 @@ async def access_control(request: Request, call_next):
     local = is_local(request)
     device_only = (
         "/api/v1/settings",
-        "/api/v1/calendar/connect",
-        "/api/v1/calendar/calendars",
-        "/api/v1/calendar/accounts",
         "/api/v1/network",
         "/api/v1/hardware",
         "/api/v1/display",
